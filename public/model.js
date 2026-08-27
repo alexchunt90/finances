@@ -1,0 +1,510 @@
+/* ==========================================================================
+   The arithmetic. No DOM here.
+
+   Two ideas do most of the work:
+
+   1. Fixed obligations divide by 24 flat; variable targets accrue per DAY and
+      are prorated by the period's real length. Periods run 13-19 days, so a
+      flat per-period grocery target would flag a 19-day period as an overspend
+      you never committed.
+
+   2. What you *contribute* is the goal metric, not what your balances do.
+      Balances move on markets. Contributions move on decisions.
+   ========================================================================== */
+
+'use strict';
+
+const Model = (() => {
+  const DAYS_PER_MONTH = 365.25 / 12; // 30.4375
+  const sum = (xs, f = (x) => x) => xs.reduce((t, x) => t + f(x), 0);
+  const round2 = (n) => Math.round(n * 100) / 100;
+
+  // --- expenses -------------------------------------------------------------
+
+  const committedTotal = (cfg) => sum(cfg.expenses.committed, (e) => e.perPeriod);
+  const sinkingTotal = (cfg) => sum(cfg.expenses.sinking, (e) => e.perPeriod);
+
+  /** The scheduled bank transfer that funds every annual bill. */
+  const scheduledTransfer = (cfg) => round2(sinkingTotal(cfg));
+
+  /** A monthly target, prorated to however many days the period actually ran. */
+  function prorate(monthly, days) {
+    return round2((monthly / DAYS_PER_MONTH) * days);
+  }
+
+  function targetsFor(cfg, days) {
+    return cfg.expenses.targets.map((t) => ({ ...t, budget: prorate(t.monthly, days) }));
+  }
+
+  const targetsTotal = (cfg, days) => round2(sum(targetsFor(cfg, days), (t) => t.budget));
+
+  /** What you'd still owe if everything optional were cut. The real floor. */
+  function necessaryFloor(cfg, days) {
+    const c = sum(cfg.expenses.committed.filter((e) => e.necessary), (e) => e.perPeriod);
+    const s = sum(cfg.expenses.sinking.filter((e) => e.necessary), (e) => e.perPeriod);
+    const t = sum(targetsFor(cfg, days).filter((e) => e.necessary), (e) => e.budget);
+    return round2(c + s + t);
+  }
+
+  // --- the waterfall --------------------------------------------------------
+
+  /**
+   * Order money leaves take-home. Sinking funds sit above the reducible tiers
+   * and are never cut: halving them means the annual bill is unfunded when it
+   * lands, which sends you back to the emergency fund you were trying to refill.
+   */
+  function waterfall(cfg, { days, balances = {} }) {
+    const w = cfg.waterfall;
+    const emergencyAcct = cfg.accounts.find((a) => a.id === 'emergency');
+    const emergencyBalance = balances.emergency ?? 0;
+    const inRecovery = emergencyBalance < (emergencyAcct?.target ?? 0);
+    const keep = inRecovery ? 1 - cfg.rules.recoveryReductionPct / 100 : 1;
+
+    // Brokerage and long-term both fan out, so each is the sum of its parts
+    // rather than a number of its own. Older shapes still load: a single
+    // brokerage account, or a long-term percentage map plus a total.
+    const brokerageSplit = Array.isArray(w.brokerageSplit) && w.brokerageSplit.length
+      ? w.brokerageSplit
+      : [{ accountId: w.brokerageAccountId, perPeriod: w.brokeragePerPeriod || 0 }];
+
+    const longtermSplit = Array.isArray(w.longtermSplit)
+      ? w.longtermSplit
+      : Object.entries(w.longtermSplit || {}).map(([bucketId, pct]) => ({
+          bucketId, perPeriod: round2((w.longtermPerPeriod || 0) * (pct / 100)),
+        }));
+
+    const reducible = {
+      buffer: w.bufferPerPeriod,
+      roth: w.rothPerPeriod,
+      longterm: round2(sum(longtermSplit, (d) => d.perPeriod || 0)),
+      brokerage: round2(sum(brokerageSplit, (d) => d.perPeriod || 0)),
+    };
+    const freed = inRecovery ? round2(sum(Object.values(reducible)) * (1 - keep)) : 0;
+
+    const tiers = [
+      { key: 'committed', label: 'Committed bills', amount: committedTotal(cfg), reducible: false, saving: false },
+      { key: 'targets', label: 'Variable targets', amount: targetsTotal(cfg, days), reducible: false, saving: false },
+      // `base` is the configured figure and what an editor must bind to;
+      // `amount` is what actually moves this period once recovery is applied.
+      // Binding an input to `amount` would silently halve the saved value.
+      { key: 'sinking', label: 'Sinking funds', amount: sinkingTotal(cfg), base: sinkingTotal(cfg), configKey: null, reducible: false, saving: true, accountId: 'sinking', note: 'set in section 2' },
+      { key: 'emergency', label: 'Emergency fund', amount: round2(w.emergencyPerPeriod + freed), base: w.emergencyPerPeriod, configKey: 'emergencyPerPeriod', reducible: false, saving: true, accountId: 'emergency', note: freed ? `includes ${freed.toFixed(2)} redirected` : '' },
+      { key: 'buffer', label: 'Buffer replenishment', amount: round2(reducible.buffer * keep), base: reducible.buffer, configKey: 'bufferPerPeriod', reducible: true, saving: true, accountId: 'buffer' },
+      { key: 'roth', label: 'Roth IRA', amount: round2(reducible.roth * keep), base: reducible.roth, configKey: 'rothPerPeriod', reducible: true, saving: true, accountId: 'roth' },
+      { key: 'longterm', label: 'Long-term savings', amount: round2(reducible.longterm * keep), base: reducible.longterm, configKey: null, splitKey: 'longtermSplit', reducible: true, saving: true, accountId: 'longterm',
+        destinations: longtermSplit.map((d, i) => ({
+          index: i,
+          // Goals live inside one real account, so the money lands there while
+          // the bucket only records which goal it is earmarked for.
+          accountId: (cfg.buckets.find((b) => b.id === d.bucketId) || {}).accountId || 'longterm',
+          bucketId: d.bucketId,
+          base: round2(d.perPeriod || 0),
+          amount: round2((d.perPeriod || 0) * keep),
+        })) },
+      // configKey is null because the parent is derived from its destinations —
+      // the same reason the sinking row is not editable in place.
+      { key: 'brokerage', label: 'Brokerage', amount: round2(reducible.brokerage * keep), base: reducible.brokerage, configKey: null, splitKey: 'brokerageSplit', reducible: true, saving: true, accountId: null,
+        destinations: brokerageSplit.map((d, i) => ({
+          index: i,
+          accountId: d.accountId,
+          base: round2(d.perPeriod || 0),
+          amount: round2((d.perPeriod || 0) * keep),
+        })) },
+    ];
+
+    // Every saving tier gets a uniform destination list so anything downstream
+    // — expected flows, the trajectory — can iterate one shape.
+    for (const t of tiers) {
+      if (!t.saving || t.destinations) continue;
+      t.destinations = [{ index: 0, accountId: t.accountId, base: t.base, amount: t.amount }];
+    }
+
+    const allocated = round2(sum(tiers, (t) => t.amount));
+    return {
+      tiers,
+      allocated,
+      savingsTotal: round2(sum(tiers.filter((t) => t.saving), (t) => t.amount)),
+      inRecovery,
+      freed,
+      unallocated: round2(cfg.income.takeHomePerPeriod - allocated),
+    };
+  }
+
+  // --- the open period ------------------------------------------------------
+
+  /**
+   * A period's end is whenever you close it, not when the next deposit lands.
+   * Closing four days late means four extra days of groceries went on this
+   * period, so proration follows the actual span.
+   */
+  function periodDays(period, todayISO) {
+    const end = period.closedOn || todayISO;
+    const elapsed = Math.max(1, PayDates.daysBetween(period.start, end));
+    const scheduled = Math.max(1, PayDates.daysBetween(period.start, period.scheduledEnd));
+    const projected = period.closedOn ? elapsed : Math.max(elapsed, scheduled);
+    // Floored at 1 so a per-day figure on the final day divides by a day, not
+    // by zero.
+    const remaining = Math.max(1, projected - elapsed);
+    return { elapsed, scheduled, projected, remaining, late: elapsed > scheduled };
+  }
+
+  /** Where each variable target stands, and where this pace lands by close. */
+  function pace(cfg, period, todayISO) {
+    const days = periodDays(period, todayISO);
+    const spentBy = {};
+    for (const s of period.spending || []) {
+      spentBy[s.targetId] = (spentBy[s.targetId] || 0) + s.amount;
+    }
+    const rows = cfg.expenses.targets.map((t) => {
+      const spent = round2(spentBy[t.id] || 0);
+      const budget = prorate(t.monthly, days.projected);
+      const toDate = prorate(t.monthly, days.elapsed);
+      const projected = round2((spent / Math.max(1, days.elapsed)) * days.projected);
+      return {
+        ...t, spent, budget, toDate, projected,
+        pacePct: toDate > 0 ? round2((spent / toDate) * 100) : 0,
+        overBy: round2(projected - budget),
+        overage: round2(Math.max(0, spent - budget)),
+        unused: round2(Math.max(0, budget - spent)),
+      };
+    });
+    // A single Costco run on day 2 extrapolates to an absurd month. Projections
+    // only mean something once a few days of ordinary spending are behind them,
+    // so below the threshold the app says so instead of guessing loudly.
+    const minDays = Math.max(3, Math.ceil(days.projected * 0.25));
+    // Overage and unused are summed per category and never netted against each
+    // other: a blown grocery budget is not undone by an untouched fuel budget,
+    // even though both come out of the same paycheck.
+    return {
+      days, rows, reliable: days.elapsed >= minDays, minDays,
+      spent: round2(sum(rows, (r) => r.spent)),
+      budget: round2(sum(rows, (r) => r.budget)),
+      projected: round2(sum(rows, (r) => r.projected)),
+      overage: round2(sum(rows, (r) => r.overage)),
+      unused: round2(sum(rows, (r) => r.unused)),
+    };
+  }
+
+  const surpriseTotal = (period) => round2(sum(period.oneOffs || [], (o) => o.amount));
+
+  /**
+   * Two separate pools of what is left in the period:
+   *
+   *   unplanned — pay not committed to any bill, saving, or category budget
+   *   planned   — category budget that exists but has not been spent yet
+   *
+   * A surprise bill draws only on the unplanned pool, then on the buffer. It
+   * never eats the planned pool, because that money is already spoken for by
+   * groceries and fuel that have simply not been bought yet.
+   */
+  function settle(cfg, period, wf, pace) {
+    const surprises = surpriseTotal(period);
+    const unplanned = round2(
+      period.takeHome - committedTotal(cfg) - wf.savingsTotal - pace.budget - pace.overage
+    );
+    const fromPay = round2(Math.min(surprises, Math.max(0, unplanned)));
+    const fromBuffer = round2(surprises - fromPay);
+    const unplannedLeft = round2(unplanned - surprises);
+    return {
+      surprises,
+      cushion: unplanned,
+      unplannedLeft,
+      plannedLeft: pace.unused,
+      totalLeft: round2(unplannedLeft + pace.unused),
+      fromPay, fromBuffer,
+      left: unplannedLeft,
+      // Whatever survives in either pool is real money at close. The unplanned
+      // pool floors at zero because anything past that came from the buffer.
+      surplus: round2(Math.max(0, unplannedLeft) + pace.unused),
+    };
+  }
+
+  /** Surplus goes where the shortfalls are: emergency, then buffer, then a goal. */
+  function sweepPlan(cfg, surplus, balances) {
+    if (surplus <= 0) return [];
+    const plan = [];
+    let left = surplus;
+    for (const step of cfg.rules.surplusSweepOrder) {
+      if (left <= 0.005) break;
+      if (step.startsWith('bucket:')) {
+        plan.push({ target: step.slice(7), kind: 'bucket', amount: round2(left) });
+        left = 0;
+        break;
+      }
+      const acct = cfg.accounts.find((a) => a.id === step);
+      if (!acct || !acct.target) continue;
+      const gap = round2(acct.target - (balances[acct.id] ?? 0));
+      if (gap <= 0) continue;
+      const give = Math.min(gap, left);
+      plan.push({ target: acct.id, kind: 'account', amount: round2(give) });
+      left = round2(left - give);
+    }
+    return plan;
+  }
+
+  // --- reconciliation -------------------------------------------------------
+
+  /**
+   * Balance change minus recorded flows. On a stable account that gap is money
+   * that moved without being written down. On a brokerage it is market
+   * movement and means nothing — flagging it there would cry wolf every period.
+   */
+  /**
+   * The standing per-period transfers are configuration, not hand-entered
+   * flows. If reconciliation ignored them, every period would flag the routine
+   * $500 to the brokerage as unaccounted — noise that buries the real signal.
+   */
+  function plannedFlows(cfg, period, wf) {
+    const map = {};
+    const add = (id, amt) => { if (id) map[id] = round2((map[id] || 0) + amt); };
+    for (const t of wf.tiers) {
+      if (!t.saving) continue;
+      for (const d of t.destinations || []) add(d.accountId, d.amount);
+    }
+    // Only the part of a surprise bill the buffer actually covered.
+    add('buffer', -(period.totals ? period.totals.surpriseFromBuffer || 0 : 0));
+    // The 401k is funded pre-tax and never touches the waterfall, but it still
+    // lands in the account, so reconciliation has to expect it.
+    const k401 = cfg.income.preTax?.retirement401kMonthly || 0;
+    if (k401) add('k401', round2(k401 / 2));
+    return map;
+  }
+
+  function reconcile(cfg, period, prevBalances, planned = {}) {
+    const flowsBy = {};
+    for (const f of period.flows || []) {
+      // A transfer is one movement across two accounts. It nets to zero and
+      // must never register as a contribution, or a liquidity event would show
+      // up as the best savings period you ever had.
+      const signed = f.type === 'withdrawal' ? -Math.abs(f.amount) : Math.abs(f.amount);
+      flowsBy[f.accountId] = (flowsBy[f.accountId] || 0) + (f.type === 'transfer' ? -Math.abs(f.amount) : signed);
+      if (f.type === 'transfer' && f.toAccountId) {
+        flowsBy[f.toAccountId] = (flowsBy[f.toAccountId] || 0) + Math.abs(f.amount);
+      }
+    }
+    return cfg.accounts.map((a) => {
+      const before = prevBalances[a.id];
+      const after = period.balances?.[a.id];
+      const expected = round2(planned[a.id] || 0);
+      const recorded = round2(flowsBy[a.id] || 0);
+      const flow = round2(expected + recorded);
+      const known = before != null && after != null;
+      const delta = known ? round2(after - before) : null;
+      const residual = known ? round2(delta - flow) : null;
+      return {
+        account: a, before, after, flow, expected, recorded, delta, residual,
+        meaning: !known
+          ? 'no snapshot'
+          : a.volatile ? 'market movement'
+          : Math.abs(residual) < 1 ? 'reconciled'
+          : 'unaccounted',
+        warn: known && !a.volatile && Math.abs(residual) >= 1,
+      };
+    });
+  }
+
+  /** Contributions out of take-home. Windfalls and transfers are excluded. */
+  function contributed(period) {
+    return round2(sum((period.flows || []).filter((f) => f.type === 'contribution'), (f) => f.amount));
+  }
+  const windfalls = (period) =>
+    round2(sum((period.flows || []).filter((f) => f.type === 'windfall'), (f) => f.amount));
+
+  // --- trajectories ---------------------------------------------------------
+
+  /** Trailing average one-off draw, seeded from config until history exists. */
+  function averageDraw(cfg, closedPeriods) {
+    const recent = closedPeriods.slice(-cfg.rules.trailingPeriodsForAverage);
+    if (recent.length < 2) return { value: cfg.rules.expectedOneOffPerPeriod, source: 'estimate', n: 0 };
+    const avg = sum(recent, (p) => (p.totals && p.totals.surpriseFromBuffer) || 0) / recent.length;
+    return { value: round2(avg), source: 'trailing average', n: recent.length };
+  }
+
+  /**
+   * The buffer is the tier most likely to fail quietly: replenished at a fixed
+   * trickle, drained unpredictably. It can trend to zero for months without any
+   * single period looking wrong.
+   */
+  function bufferTrajectory(cfg, balances, closedPeriods, inRecovery) {
+    const keep = inRecovery ? 1 - cfg.rules.recoveryReductionPct / 100 : 1;
+    const inflow = round2(cfg.waterfall.bufferPerPeriod * keep);
+    const draw = averageDraw(cfg, closedPeriods);
+    const net = round2(inflow - draw.value);
+    const points = [];
+    let bal = balances.buffer ?? 0;
+    for (let i = 0; i <= cfg.rules.trajectoryPeriods; i++) {
+      points.push({ period: i, balance: round2(bal) });
+      bal += net;
+    }
+    const acct = cfg.accounts.find((a) => a.id === 'buffer');
+    return {
+      inflow, draw, net, points,
+      target: acct?.target ?? 0,
+      periodsToZero: net < 0 ? Math.ceil((balances.buffer ?? 0) / -net) : null,
+    };
+  }
+
+  /** Only worth showing while the emergency fund is short. */
+  function emergencyTrajectory(cfg, balances, waterfallResult) {
+    const acct = cfg.accounts.find((a) => a.id === 'emergency');
+    const target = acct?.target ?? 0;
+    const bal = balances.emergency ?? 0;
+    if (bal >= target) return null;
+    const inflow = waterfallResult.tiers.find((t) => t.key === 'emergency').amount;
+    const points = [];
+    let b = bal;
+    for (let i = 0; i <= cfg.rules.trajectoryPeriods; i++) {
+      points.push({ period: i, balance: round2(Math.min(b, target)) });
+      b += inflow;
+    }
+    return {
+      inflow, target, balance: bal, points,
+      gap: round2(target - bal),
+      periodsToTarget: inflow > 0 ? Math.ceil((target - bal) / inflow) : null,
+    };
+  }
+
+  /**
+   * Where the savings destinations land over the next stretch of periods, from
+   * planned contributions alone. Deliberately no market assumption: the point
+   * is what the plan does, and half these accounts are volatile.
+   *
+   * Two destinations are not monotonic and are modelled properly: sinking funds
+   * drop by the whole bill on its due date, and the buffer bleeds the trailing
+   * average of one-off spending.
+   */
+  function savingsTrajectory(cfg, balances, closedPeriods, wf, todayISO) {
+    const n = cfg.rules.trajectoryPeriods;
+    const horizon = PayDates.iso(PayDates.parse(todayISO) + (n + 2) * 20 * PayDates.DAY);
+    const deposits = PayDates.depositsBetween(todayISO, horizon).slice(0, n + 1);
+    if (!deposits.length) return null;
+
+    const perPeriod = {};
+    for (const t of wf.tiers.filter((x) => x.saving)) {
+      for (const d of t.destinations || []) {
+        if (d.accountId) perPeriod[d.accountId] = round2((perPeriod[d.accountId] || 0) + d.amount);
+      }
+    }
+    const destinations = Object.keys(perPeriod);
+
+    const draw = averageDraw(cfg, closedPeriods);
+    const running = {};
+    for (const id of destinations) running[id] = round2(balances[id] ?? 0);
+
+    // Next occurrence of each annual bill, so the sinking line saws rather than
+    // climbing through a payment that actually empties it.
+    const dues = cfg.expenses.sinking
+      .filter((sk) => sk.dueMonth != null && sk.dueDay != null)
+      .map((sk) => {
+        const t = PayDates.parse(todayISO);
+        const y = new Date(t).getUTCFullYear();
+        let due = Date.UTC(y, sk.dueMonth - 1, sk.dueDay);
+        if (due < t) due = Date.UTC(y + 1, sk.dueMonth - 1, sk.dueDay);
+        return { name: sk.name, amount: sk.annualAmount, dueISO: PayDates.iso(due) };
+      });
+
+    // Point zero is today with today's balances; each later point is a deposit
+    // date with that period's contributions and outflows applied.
+    const points = [{ date: todayISO, balances: { ...running } }];
+    const paid = [];
+    let from = todayISO;
+    for (const dep of deposits.slice(0, n)) {
+      const to = dep.available;
+      for (const id of destinations) running[id] = round2(running[id] + perPeriod[id]);
+      if (running.buffer != null) running.buffer = round2(running.buffer - draw.value);
+      for (const d of dues) {
+        if (d.dueISO >= from && d.dueISO < to && running.sinking != null) {
+          running.sinking = round2(running.sinking - d.amount);
+          paid.push({ ...d, at: to });
+        }
+      }
+      points.push({ date: to, balances: { ...running } });
+      from = to;
+    }
+
+    const total = (p) => round2(sum(destinations, (id) => p.balances[id] || 0));
+    return {
+      points, destinations, perPeriod, draw, billsPaid: paid,
+      periods: points.length - 1,
+      start: total(points[0]),
+      end: total(points[points.length - 1]),
+      contributedPerPeriod: round2(sum(destinations, (id) => perPeriod[id])),
+    };
+  }
+
+  /** Will each sinking fund cover its bill by the due date? */
+  function sinkingCoverage(cfg, bucketBalances, todayISO) {
+    return cfg.expenses.sinking.map((s) => {
+      const balance = round2(bucketBalances[s.bucketId] ?? 0);
+      if (s.dueMonth == null || s.dueDay == null) {
+        return { ...s, balance, status: 'no-due-date', shortfall: null, periodsLeft: null };
+      }
+      const today = PayDates.parse(todayISO);
+      const y = new Date(today).getUTCFullYear();
+      let due = Date.UTC(y, s.dueMonth - 1, s.dueDay);
+      if (due < today) due = Date.UTC(y + 1, s.dueMonth - 1, s.dueDay);
+      const dueISO = PayDates.iso(due);
+      const periodsLeft = PayDates.depositsBetween(todayISO, dueISO).length;
+      const projected = round2(balance + s.perPeriod * periodsLeft);
+      // What the fund should already hold: the bill, less everything the
+      // remaining contributions will still add before it lands.
+      const required = round2(Math.max(0, s.annualAmount - s.perPeriod * periodsLeft));
+      const shortfall = round2(required - balance);
+      const daysUntilDue = PayDates.daysBetween(todayISO, dueISO);
+      return {
+        ...s, balance, dueISO, periodsLeft, projected, required, daysUntilDue,
+        shortfall: shortfall > 0.005 ? shortfall : 0,
+        status: shortfall > 0.005 ? 'short' : 'covered',
+        urgent: shortfall > 0.005 && periodsLeft <= 1,
+      };
+    });
+  }
+
+  // --- accounts -------------------------------------------------------------
+
+  /**
+   * Two headline numbers, because one blended total lies in both directions:
+   * sinking funds are pre-paid bills, not wealth, and illiquid holdings are
+   * real but unspendable.
+   */
+  function assetSummary(cfg, balances, bucketBalances) {
+    const encumbered = round2(
+      sum(cfg.buckets.filter((b) => b.kind === 'sinking'), (b) => bucketBalances[b.id] ?? 0)
+    );
+    const liquid = round2(sum(cfg.accounts.filter((a) => a.liquid), (a) => balances[a.id] ?? 0));
+    const total = round2(sum(cfg.accounts, (a) => balances[a.id] ?? 0));
+    return {
+      accessible: round2(liquid - encumbered),
+      liquid, encumbered, total,
+      illiquid: round2(total - liquid),
+    };
+  }
+
+  /**
+   * Buckets are allocations inside a real account, so they must add up to it.
+   * When they drift, either a deposit was not allocated or a bucket was spent
+   * without being recorded — both worth knowing before the numbers are trusted.
+   */
+  function bucketDrift(cfg, balances, bucketBalances) {
+    const out = [];
+    for (const a of cfg.accounts) {
+      const owned = cfg.buckets.filter((b) => b.accountId === a.id);
+      if (!owned.length) continue;
+      const allocated = round2(sum(owned, (b) => bucketBalances[b.id] ?? 0));
+      const actual = round2(balances[a.id] ?? 0);
+      const drift = round2(actual - allocated);
+      out.push({ account: a, allocated, actual, drift, ok: Math.abs(drift) < 0.005 });
+    }
+    return out;
+  }
+
+  return {
+    round2, sum, prorate, DAYS_PER_MONTH, bucketDrift,
+    committedTotal, sinkingTotal, scheduledTransfer, targetsFor, targetsTotal, necessaryFloor,
+    waterfall, periodDays, pace, surpriseTotal, settle, sweepPlan,
+    reconcile, plannedFlows, contributed, windfalls,
+    averageDraw, bufferTrajectory, emergencyTrajectory, savingsTrajectory, sinkingCoverage, assetSummary,
+  };
+})();
+
+if (typeof module !== 'undefined') module.exports = Model;

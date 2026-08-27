@@ -1,0 +1,14 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Editor / OS cruft
+.DS_Store
+*.sublime-workspace
+
+# Atomic-write leftovers
+*.tmp

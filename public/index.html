@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Finances</title>
+<link rel="stylesheet" href="/styles.css" />
+<link rel="icon" href="data:," />
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-title">
+    <h1>Finances <span class="masthead-emoji" role="img" aria-label="money with wings">💸</span></h1>
+    <p id="period-caption">—</p>
+  </div>
+  <div class="masthead-chips">
+    <div class="chip">
+      <span class="chip-label">Take-home</span>
+      <span class="chip-value" data-num id="chip-takehome">—</span>
+      <span class="chip-source">this period</span>
+    </div>
+    <div class="chip" id="chip-left-wrap">
+      <span class="chip-label">Left to spend</span>
+      <span class="chip-value" data-num id="chip-left">—</span>
+      <span class="chip-source">unplanned + planned</span>
+    </div>
+    <div class="chip">
+      <span class="chip-label">Accessible</span>
+      <span class="chip-value" data-num id="chip-accessible">—</span>
+      <span class="chip-source">liquid, unspoken for</span>
+    </div>
+    <div class="chip">
+      <span class="chip-label">Net worth</span>
+      <span class="chip-value" data-num id="chip-networth">—</span>
+      <span class="chip-source">every account</span>
+    </div>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" class="tab is-active" data-view="budget">Budget</button>
+  <button role="tab" class="tab" data-view="expenses">Expenses</button>
+  <button role="tab" class="tab" data-view="assets">Assets</button>
+  <button role="tab" class="tab" data-view="projections">Projections</button>
+  <button role="tab" class="tab" data-view="mortgage">Mortgage</button>
+  <span class="tab-status" id="save-status" role="status"></span>
+</nav>
+
+<p class="notice" id="notice" hidden></p>
+
+<!-- ===================================================================== -->
+<main class="frame" id="view-budget">
+
+  <section class="banner" id="recovery-banner" hidden>
+    <strong>Recovery mode.</strong>
+    <span id="recovery-text"></span>
+  </section>
+
+  <section class="console">
+    <h2 class="eyebrow">Where this period stands</h2>
+    <div class="readout">
+      <div class="readout-primaries">
+        <div class="readout-primary">
+          <span class="field-label">Unplanned spend remaining</span>
+          <div class="big-number"><span class="unit">$</span><span data-num id="big-unspent">—</span></div>
+          <p class="readout-daily" id="daily-unplanned">—</p>
+          <p class="readout-caption" id="unspent-caption">—</p>
+        </div>
+        <div class="readout-primary">
+          <span class="field-label">Planned spend remaining</span>
+          <div class="big-number"><span class="unit">$</span><span data-num id="big-unused">—</span></div>
+          <p class="readout-daily" id="daily-planned">—</p>
+          <p class="readout-caption" id="unused-caption">—</p>
+        </div>
+      </div>
+      <dl class="readout-stats">
+        <div><dt>Day</dt><dd data-num id="stat-day">—</dd></div>
+        <div><dt>Variable spent</dt><dd data-num id="stat-varspent">—</dd></div>
+        <div><dt>Projected by close</dt><dd data-num id="stat-projected">—</dd></div>
+        <div><dt>One-off bills</dt><dd data-num id="stat-oneoff">—</dd></div>
+      </dl>
+    </div>
+    <div class="period-bar"><div class="period-bar-fill" id="period-bar-fill"></div></div>
+    <p class="verdict" id="verdict"></p>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">The waterfall</h2>
+      <p class="block-note">Order money leaves take-home. Sinking funds are never reduced.</p>
+    </div>
+    <table class="ledger">
+      <thead><tr><th>Tier</th><th class="r">Amount</th><th class="r">Running total</th><th>Note</th></tr></thead>
+      <tbody id="waterfall-rows"></tbody>
+    </table>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Variable targets — pace</h2>
+      <p class="block-note" id="pace-note"></p>
+    </div>
+    <div id="pace-rows" class="pace-rows"></div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Log spending</h2>
+      <p class="block-note">Entries persist as you go and archive when the period closes. Anything without a category of its own goes under Other.</p>
+    </div>
+    <form class="entry-row" id="spend-form">
+      <label>Date<input type="date" id="spend-date" required /></label>
+      <label>Category<select id="spend-target"></select></label>
+      <label>Amount<input type="number" id="spend-amount" step="0.01" min="0" required /></label>
+      <label class="grow">Note<input type="text" id="spend-note" placeholder="optional" /></label>
+      <button type="submit" class="solid-button">Add</button>
+    </form>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Date</th><th>Category</th><th class="r">Amount</th><th>Note</th><th></th></tr></thead>
+        <tbody id="spend-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Surprise bills</h2>
+      <p class="block-note" id="oneoff-note">Drawn from unspent pay at close, with only the remainder taken from the buffer.</p>
+    </div>
+    <form class="entry-row" id="oneoff-form">
+      <label>Date<input type="date" id="oneoff-date" required /></label>
+      <label class="grow">What<input type="text" id="oneoff-name" required /></label>
+      <label>Amount<input type="number" id="oneoff-amount" step="0.01" min="0" required /></label>
+      <button type="submit" class="solid-button">Add</button>
+    </form>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th class="nowrap">Date</th><th>What</th><th class="r nowrap">Amount</th><th></th></tr></thead>
+        <tbody id="oneoff-rows"></tbody>
+      </table>
+    </div>
+    <p class="verdict" id="oneoff-settlement"></p>
+  </section>
+
+  <section class="block" id="close-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Close the period</h2>
+      <p class="block-note" id="close-note"></p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Account</th><th>Kind</th><th class="r">Previous</th><th class="r">Balance now</th><th class="r">Change</th></tr></thead>
+        <tbody id="close-rows"></tbody>
+      </table>
+    </div>
+    <h3 class="eyebrow" style="margin-top:20px">Flows this period not already in the waterfall</h3>
+    <p class="block-note">Bonuses, one-time deposits, withdrawals. A transfer between two accounts nets to zero and never counts as a contribution.</p>
+    <form class="entry-row" id="flow-form">
+      <label>Account<select id="flow-account"></select></label>
+      <label>Type<select id="flow-type">
+        <option value="contribution">Contribution</option>
+        <option value="windfall">Windfall (bonus)</option>
+        <option value="withdrawal">Withdrawal</option>
+        <option value="transfer">Transfer to…</option>
+      </select></label>
+      <label id="flow-to-wrap" hidden>To<select id="flow-to"></select></label>
+      <label>Amount<input type="number" id="flow-amount" step="0.01" min="0" required /></label>
+      <label class="grow">Note<input type="text" id="flow-note" placeholder="optional" /></label>
+      <button type="submit" class="solid-button">Add</button>
+    </form>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Account</th><th>Type</th><th class="r">Amount</th><th>Note</th><th></th></tr></thead>
+        <tbody id="flow-rows"></tbody>
+      </table>
+    </div>
+
+    <div class="close-actions">
+      <span id="close-progress" class="save-status"></span>
+      <button type="button" id="close-period" class="solid-button" disabled>Close period</button>
+    </div>
+  </section>
+
+</main>
+
+<!-- ===================================================================== -->
+<main class="frame" id="view-expenses" hidden>
+
+  <section class="console">
+    <h2 class="eyebrow">What leaves every period</h2>
+    <div class="readout">
+      <div class="readout-primaries">
+        <div class="readout-primary">
+          <span class="field-label">Allocated</span>
+          <div class="big-number"><span class="unit">$</span><span data-num id="exp-total">—</span></div>
+          <p class="readout-caption" id="exp-caption">—</p>
+        </div>
+        <div class="readout-primary" id="exp-unallocated-wrap">
+          <span class="field-label">Unallocated</span>
+          <div class="big-number"><span class="unit">$</span><span data-num id="exp-unallocated">—</span></div>
+          <p class="readout-caption" id="exp-unallocated-caption">—</p>
+        </div>
+      </div>
+      <dl class="readout-stats">
+        <div><dt>Committed</dt><dd data-num id="exp-committed">—</dd></div>
+        <div><dt>Targets</dt><dd data-num id="exp-targets">—</dd></div>
+        <div><dt>Savings</dt><dd data-num id="exp-savings">—</dd></div>
+      </dl>
+    </div>
+    <p class="verdict" id="transfer-verdict"></p>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">1 · Committed bills</h2>
+      <p class="block-note">Fixed each period. Untick "necessary" for anything you could drop.</p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead id="committed-head"><tr>
+          <th data-col="name" data-sort="name" tabindex="0" scope="col">Name</th>
+          <th data-col="category" data-sort="category" tabindex="0" scope="col">Category</th>
+          <th class="r" data-col="perPeriod" data-sort="perPeriod" tabindex="0" scope="col">Per period</th>
+          <th class="r" data-col="perMonth" data-sort="perPeriod" tabindex="0" scope="col">Per month</th>
+          <th class="r" data-col="perYear" data-sort="perPeriod" tabindex="0" scope="col">Per year</th>
+          <th class="c" data-col="necessary" data-sort="necessary" tabindex="0" scope="col">Necessary</th>
+        </tr></thead>
+        <tbody id="committed-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">2 · Sinking funds for annual bills</h2>
+      <p class="block-note">Contribute per period, pay the bill from the fund. Paying it is a transfer, not new spending.</p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Name</th><th class="r">Per period</th><th class="r">Annual bill</th><th>Due</th><th class="r">Fund</th><th class="r">Should be</th><th>Coverage</th></tr></thead>
+        <tbody id="sinking-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">3 · Variable targets</h2>
+      <p class="block-note">Monthly amounts. Prorated by the real length of each period, which runs 13 to 19 days.</p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Name</th><th>Category</th><th class="r">Per month</th><th class="r">13-day period</th><th class="r">19-day period</th><th class="c">Necessary</th></tr></thead>
+        <tbody id="target-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">4 · Planned savings</h2>
+      <p class="block-note" id="savings-note"></p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Destination</th><th>Account</th><th class="r">Planned</th><th class="r">This period</th><th class="r">Per year</th><th>Note</th></tr></thead>
+        <tbody id="savings-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Pay calendar</h2>
+      <p class="block-note">Deposit lands the first business day before the adjusted pay date.</p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Scheduled</th><th>Payroll pays</th><th>Money lands</th><th class="r">Days</th><th>Adjusted for</th></tr></thead>
+        <tbody id="calendar-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<!-- ===================================================================== -->
+<main class="frame" id="view-assets" hidden>
+
+  <section class="console">
+    <h2 class="eyebrow">What you actually have</h2>
+    <div class="readout">
+      <div class="readout-primary">
+        <span class="field-label">Accessible savings</span>
+        <div class="big-number"><span class="unit">$</span><span data-num id="asset-accessible">—</span></div>
+        <p class="readout-caption">Liquid, minus what sinking funds have already spoken for.</p>
+      </div>
+      <dl class="readout-stats">
+        <div><dt>Total picture</dt><dd data-num id="asset-total">—</dd></div>
+        <div><dt>Illiquid</dt><dd data-num id="asset-illiquid">—</dd></div>
+        <div><dt>Spoken for</dt><dd data-num id="asset-encumbered">—</dd></div>
+        <div><dt>Contributed last period</dt><dd data-num id="asset-contributed">—</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Accounts</h2>
+      <p class="block-note">Only accounts hold balances. Buckets are allocations inside them. Sinking funds are broken out per bill on the Expenses tab.</p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Account</th><th>Tier</th><th class="c">Volatile</th><th class="c">Liquid</th><th class="r">Balance</th><th class="r">Target</th></tr></thead>
+        <tbody id="account-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="history-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Long-term progress</h2>
+      <p class="block-note" id="history-note"></p>
+    </div>
+    <div class="chart-shell"><svg id="chart-history" viewBox="0 0 760 320" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th class="nowrap">Date</th><th>Event</th><th class="r nowrap">Amount</th></tr></thead>
+        <tbody id="event-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="composition-block">
+    <div class="block-head">
+      <h2 class="eyebrow">What it is made of</h2>
+      <p class="block-note" id="composition-note"></p>
+    </div>
+    <div class="chart-shell"><svg id="chart-composition" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="legend" id="composition-legend"></div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Contribution per period</h2>
+      <p class="block-note">The goal metric. Balances move on markets; this moves on decisions.</p>
+    </div>
+    <div class="chart-shell"><svg id="chart-contrib" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Reconciliation — last closed period</h2>
+      <p class="block-note">Balance change minus recorded flows. Only meaningful on non-volatile accounts.</p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Account</th><th class="r">Change</th><th class="r">Expected</th><th class="r">Recorded</th><th class="r">Residual</th><th>Reading</th></tr></thead>
+        <tbody id="reconcile-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<!-- ===================================================================== -->
+<main class="frame" id="view-projections" hidden>
+
+  <section class="console">
+    <div class="block-head">
+      <h2 class="eyebrow">Where the plan lands</h2>
+      <p class="block-note" id="projections-note"></p>
+    </div>
+  </section>
+
+  <section class="block" id="emergency-block" hidden>
+    <div class="block-head">
+      <h2 class="eyebrow">Emergency fund — recovery</h2>
+      <p class="block-note" id="emergency-note"></p>
+    </div>
+    <div class="chart-shell"><svg id="chart-emergency" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
+  </section>
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Buffer trajectory</h2>
+      <p class="block-note" id="buffer-note"></p>
+    </div>
+    <div class="chart-shell"><svg id="chart-buffer" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
+  </section>
+  <section class="block" id="savings-trajectory-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Savings trajectory</h2>
+      <p class="block-note" id="savings-traj-note"></p>
+    </div>
+    <div class="chart-shell"><svg id="chart-savings-traj" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="legend" id="savings-traj-legend"></div>
+  </section>
+
+</main>
+
+<!-- ===================================================================== -->
+<main class="frame" id="view-mortgage" hidden>
+
+  <section class="console">
+    <div class="block-head">
+      <h2 class="eyebrow">Where the balance sits</h2>
+      <p class="block-note">What paying the principal down buys you, either way: refinancing at today's market rate, or recasting your existing loan.</p>
+    </div>
+    <div class="readout">
+      <div class="readout-primaries">
+        <div class="readout-primary">
+          <span class="field-label">Remaining principal</span>
+          <div class="big-number"><span class="unit">$</span><input type="number" id="balance-field" step="500" inputmode="numeric" /></div>
+          <p class="readout-caption" id="paydown-caption">—</p>
+        </div>
+      </div>
+      <dl class="readout-stats">
+        <div><dt>Loan-to-value</dt><dd data-num id="stat-ltv">—</dd></div>
+        <div><dt>Refinance rate</dt><dd data-num id="stat-rate">—</dd></div>
+        <div><dt>Refinance payment</dt><dd data-num id="stat-payment">—</dd></div>
+        <div><dt>Recast payment</dt><dd data-num id="stat-recast">—</dd></div>
+        <div><dt>Refinance vs today</dt><dd data-num id="stat-delta">—</dd></div>
+        <div><dt>Recast vs today</dt><dd data-num id="stat-recast-delta">—</dd></div>
+      </dl>
+    </div>
+
+    <div class="slider-rig">
+      <input type="range" id="balance-slider" aria-label="Remaining principal" />
+      <div class="slider-scale"><span id="scale-left">—</span><span id="scale-right">—</span></div>
+    </div>
+
+    <div class="jump-row">
+      <span class="field-label">Jump to</span>
+      <div id="jump-buttons" class="jump-buttons"></div>
+    </div>
+
+    <p class="verdict" id="mortgage-verdict"></p>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Monthly payment curves</h2>
+      <p class="block-note">Two ways the payment can fall. <strong>Refinance</strong> steps down through pricing tiers; <strong>recast</strong> keeps your rate and payoff date and just re-amortizes. The dashed line is what you pay now.</p>
+    </div>
+    <div class="chart-shell">
+      <svg id="chart-mortgage" viewBox="0 0 760 380" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </section>
+
+  <section class="block" id="cliffs-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Every cliff, and what it costs to reach</h2>
+      <p class="block-note" id="cliffs-note"></p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr>
+          <th>Tier</th><th class="r">Principal at or below</th><th class="r">Cash to get there</th>
+          <th class="r">Rate</th><th class="r">New payment</th><th class="r">Monthly change</th><th class="r nowrap">Break-even month</th>
+        </tr></thead>
+        <tbody id="cliff-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Three ways to spend the same money</h2>
+      <p class="block-note" id="horizon-note"></p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr>
+          <th>Path</th><th class="r">Cash up front</th><th class="r">Monthly</th>
+          <th class="r">Paid over horizon</th><th class="r">Balance left</th><th class="r">Net cost</th>
+        </tr></thead>
+        <tbody id="horizon-rows"></tbody>
+      </table>
+    </div>
+    <p class="block-note" style="margin-top:12px">
+      Net cost is cash up front plus every payment made, plus whatever principal is still owed at the end of the
+      horizon. It is the only column that compares the three paths on equal terms, because a lower monthly payment
+      bought by stretching the term shows up here as a larger leftover balance.
+    </p>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Assumptions</h2>
+      <p class="block-note">Edits save to config.json like everything else. Rate-by-LTV tiers are set in <code>config.mortgage.ltvTiers</code>.</p>
+    </div>
+    <div class="assumption-grid">
+      <fieldset>
+        <legend>Loan you have</legend>
+        <label>Balance today<input type="number" id="in-cur-balance" step="500" /></label>
+        <label>Rate %<input type="number" id="in-cur-rate" step="0.005" /></label>
+        <label>Months left<input type="number" id="in-cur-months" step="1" /></label>
+        <label>Actual P&amp;I payment<input type="number" id="in-cur-payment" step="1" placeholder="calculated" /></label>
+        <label>Mortgage insurance %/yr<input type="number" id="in-cur-pmi" step="0.05" /></label>
+        <label>Recast fee<input type="number" id="in-recast-fee" step="25" /></label>
+      </fieldset>
+      <fieldset>
+        <legend>Loan you'd take</legend>
+        <label>Base rate %<input type="number" id="in-base-rate" step="0.005" /></label>
+        <label>Term in years<input type="number" id="in-term" step="1" /></label>
+        <label>Closing costs<input type="number" id="in-closing" step="100" /></label>
+        <label>Mortgage insurance %/yr<input type="number" id="in-new-pmi" step="0.05" /></label>
+        <label class="check"><input type="checkbox" id="in-roll" /> Roll closing costs into the loan</label>
+      </fieldset>
+      <fieldset>
+        <legend>Property and horizon</legend>
+        <label>Home value<input type="number" id="in-home-value" step="1000" /></label>
+        <label>Years you'll keep it<input type="number" id="in-horizon" step="1" /></label>
+      </fieldset>
+    </div>
+    <div class="mortgage-sources">
+      <div class="chip" id="chip-rate">
+        <span class="chip-label">Market rate</span>
+        <span class="chip-value" data-num>—</span>
+        <span class="chip-source">—</span>
+      </div>
+      <div class="chip" id="chip-home">
+        <span class="chip-label">Home value</span>
+        <span class="chip-value" data-num>—</span>
+        <span class="chip-source">—</span>
+      </div>
+      <button type="button" id="refresh-rate" class="ghost-button">Refresh sources</button>
+    </div>
+    <p class="block-note">
+      Every figure is principal, interest, and mortgage insurance only. Taxes and homeowners insurance are excluded
+      because they do not change when you refinance. Tier pricing is a stand-in for your lender's actual adjustments;
+      replace it with the numbers on a real loan estimate before deciding anything.
+    </p>
+  </section>
+
+</main>
+
+<script src="/paydates.js"></script>
+<script src="/model.js"></script>
+<script src="/mortgage.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

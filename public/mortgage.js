@@ -138,6 +138,24 @@ const Mortgage = (() => {
     return (lo + hi) / 2;
   }
 
+  /**
+   * The balance whose refinance payment hits a given figure. Bisected for the
+   * same reason as the recast solve, plus one of its own: the refinance line
+   * steps as the loan-to-value crosses pricing tiers, so it is not one line to
+   * invert. It is still monotonic in the balance, which is all bisection needs.
+   */
+  function refiBalanceFor(targetTotal) {
+    let lo = 0;
+    let hi = view.cfg.currentLoan.balance;
+    if (quote(hi).total <= targetTotal) return hi;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (quote(mid).total < targetTotal) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
+  }
+
   /** Remaining principal at which each pricing tier starts to apply. */
   function cliffTargets() {
     const homeValue = view.cfg.property.homeValue;
@@ -264,6 +282,7 @@ const Mortgage = (() => {
     const crossing = findCrossing();
     const box = $('mortgage-verdict');
     box.classList.remove('is-gain', 'is-cost');
+    box.hidden = false;
 
     if (!crossing) {
       box.textContent = 'No amount of principal in this range brings the new payment down to what you pay today. '
@@ -280,9 +299,10 @@ const Mortgage = (() => {
       box.classList.add('is-gain');
       return;
     }
-    box.innerHTML = `Pay the balance down to <strong>${fmt.dollars(crossing.balance)}</strong> — that is `
-      + `${fmt.dollars(cur.balance - crossing.balance)} of principal — and the new payment matches what you pay today. `
-      + 'Every dollar past that point buys a lower monthly payment.';
+    // Nothing to say in the ordinary case: the jump buttons and the payment
+    // curves already carry it.
+    box.textContent = '';
+    box.hidden = true;
   }
 
   function renderJumps() {
@@ -299,6 +319,10 @@ const Mortgage = (() => {
 
     const step = view.cfg.recastStepDown;
     if (Number.isFinite(step) && step > 0 && cur.total - step > 0) {
+      const refiTarget = refiBalanceFor(cur.total - step);
+      if (refiTarget > 0 && refiTarget < cur.balance) {
+        stops.push({ label: `Refi ${fmt.dollars(step)} less`, balance: refiTarget, kind: 'refi' });
+      }
       const target = recastBalanceFor(cur.total - step);
       if (target > 0 && target < cur.balance) {
         stops.push({ label: `Recast ${fmt.dollars(step)} less`, balance: target, kind: 'recast' });
@@ -330,9 +354,24 @@ const Mortgage = (() => {
     node.replaceChildren();
 
     const W = 760, H = 380;
-    const pad = { top: 26, right: 22, bottom: 44, left: 74 };
+
+    // Chart type is sized in viewBox user units, so squeezing the chart down to
+    // phone width shrinks the labels along with it — an 11px label on a 360px
+    // screen lands at about 5px. Counter-scale by the render ratio so labels
+    // hold a roughly constant physical size. Capped at 2.6x, which is about
+    // what a 375px phone needs; past that the gutters eat the plot.
+    const rendered = node.getBoundingClientRect().width;
+    const k = rendered > 0 ? Math.min(Math.max(W / rendered, 1), 2.6) : 1;
+    node.style.setProperty('--chart-k', k.toFixed(3));
+    // Bigger labels need bigger gutters, but only the text part scales — the
+    // fixed breathing room does not.
+    const narrow = k > 1.3;
+    const pad = { top: 26 * k, right: 22, bottom: 16 + 28 * k, left: 30 + 44 * k };
     const plotW = W - pad.left - pad.right;
     const plotH = H - pad.top - pad.bottom;
+    // Fewer ticks once the labels are large, or they collide with each other.
+    const yTicks = narrow ? 4 : 5;
+    const xTicks = narrow ? 3 : 5;
 
     const cur = current();
     const segments = chartSegments();
@@ -370,11 +409,11 @@ const Mortgage = (() => {
       }));
     }
 
-    for (let i = 0; i <= 5; i++) {
-      const value = yMin + ((yMax - yMin) * i) / 5;
+    for (let i = 0; i <= yTicks; i++) {
+      const value = yMin + ((yMax - yMin) * i) / yTicks;
       const py = y(value);
       node.appendChild(svg('line', { class: 'chart-grid', x1: pad.left, y1: py, x2: W - pad.right, y2: py }));
-      node.appendChild(svg('text', { class: 'axis-text', x: pad.left - 10, y: py + 4, 'text-anchor': 'end' }, fmt.dollars(value)));
+      node.appendChild(svg('text', { class: 'axis-text', x: pad.left - 10 * k, y: py + 4 * k, 'text-anchor': 'end' }, fmt.dollars(value)));
     }
 
     const linePoints = [];
@@ -388,7 +427,7 @@ const Mortgage = (() => {
         const jump = next.fromTotal - seg.toTotal;
         if (Math.abs(jump) > 5) {
           node.appendChild(svg('text', {
-            class: 'chart-cliff-label', x: x(seg.to) + 6, y: y((seg.toTotal + next.fromTotal) / 2) + 4,
+            class: 'chart-cliff-label', x: x(seg.to) + 6 * k, y: y((seg.toTotal + next.fromTotal) / 2) + 4 * k,
           }, `${fmt.signed(-Math.abs(jump))}/mo`));
         }
         linePoints.push(`${x(next.from)},${y(next.fromTotal)}`);
@@ -405,16 +444,21 @@ const Mortgage = (() => {
     }));
 
     node.appendChild(svg('line', { class: 'chart-now', x1: pad.left, y1: y(cur.total), x2: W - pad.right, y2: y(cur.total) }));
-    node.appendChild(svg('text', { class: 'chart-now-label', x: pad.left + 6, y: y(cur.total) - 8 },
-      `You pay ${fmt.dollars(cur.total)} now`));
+    // Large type turns the full sentence into something that runs under the
+    // marker labels, so it sheds its preamble on narrow screens.
+    node.appendChild(svg('text', { class: 'chart-now-label', x: pad.left + 6 * k, y: y(cur.total) - 8 * k },
+      narrow ? `${fmt.dollars(cur.total)} now` : `You pay ${fmt.dollars(cur.total)} now`));
 
     const crossing = findCrossing();
     if (crossing && !crossing.alreadyCheaper && crossing.balance > view.domain.min && crossing.balance < view.domain.max) {
       node.appendChild(svg('line', {
         class: 'chart-cross', x1: x(crossing.balance), y1: pad.top, x2: x(crossing.balance), y2: pad.top + plotH,
       }));
+      // Sits at the top of its rule normally; on narrow screens the top-right is
+      // already crowded by the marker labels, so it drops to the foot instead.
       node.appendChild(svg('text', {
-        class: 'chart-cross-label', x: x(crossing.balance) - 8, y: pad.top + 12, 'text-anchor': 'end',
+        class: 'chart-cross-label', x: x(crossing.balance) - 8 * k,
+        y: narrow ? pad.top + plotH - 8 * k : pad.top + 12 * k, 'text-anchor': 'end',
       }, 'Breakpoint'));
     }
 
@@ -424,34 +468,42 @@ const Mortgage = (() => {
     const recastNow = recastAt(view.balance);
     const mx = x(view.balance);
     node.appendChild(svg('line', { class: 'chart-marker-line', x1: mx, y1: pad.top, x2: mx, y2: pad.top + plotH }));
-    node.appendChild(svg('circle', { class: 'chart-marker-dot is-refi', cx: mx, cy: y(q.total), r: 5 }));
-    node.appendChild(svg('circle', { class: 'chart-marker-dot is-recast', cx: mx, cy: y(recastNow), r: 5 }));
+    node.appendChild(svg('circle', { class: 'chart-marker-dot is-refi', cx: mx, cy: y(q.total), r: 4 + k }));
+    node.appendChild(svg('circle', { class: 'chart-marker-dot is-recast', cx: mx, cy: y(recastNow), r: 4 + k }));
 
     // Flip the labels to the inside when the marker is near the right edge,
     // which is where it sits at today's balance.
     const nearRight = mx > pad.left + plotW * 0.62;
     const anchor = nearRight ? 'end' : 'start';
-    const dx = nearRight ? -11 : 11;
-    // Nudge apart if the two payments are close enough to collide.
-    const tight = Math.abs(y(q.total) - y(recastNow)) < 20;
-    const bump = tight ? (q.total >= recastNow ? -7 : 7) : 0;
+    const dx = (nearRight ? -11 : 11) * k;
+    // Nudge apart if the two payments are close enough to collide. The gap that
+    // counts as a collision grows with the type.
+    const tight = Math.abs(y(q.total) - y(recastNow)) < 20 * k;
+    const bump = tight ? (q.total >= recastNow ? -7 * k : 7 * k) : 0;
 
     node.appendChild(svg('text', {
-      class: 'chart-marker-label is-refi', x: mx + dx, y: y(q.total) + 4 + bump, 'text-anchor': anchor,
+      class: 'chart-marker-label is-refi', x: mx + dx, y: y(q.total) + 4 * k + bump, 'text-anchor': anchor,
     }, `${fmt.dollars(q.total)} refinance`));
     node.appendChild(svg('text', {
-      class: 'chart-marker-label is-recast', x: mx + dx, y: y(recastNow) + 4 - bump, 'text-anchor': anchor,
+      class: 'chart-marker-label is-recast', x: mx + dx, y: y(recastNow) + 4 * k - bump, 'text-anchor': anchor,
     }, `${fmt.dollars(recastNow)} recast`));
 
     node.appendChild(svg('line', { class: 'chart-axis', x1: pad.left, y1: pad.top + plotH, x2: W - pad.right, y2: pad.top + plotH }));
-    for (let i = 0; i <= 5; i++) {
-      const bal = view.domain.min + ((view.domain.max - view.domain.min) * i) / 5;
+    for (let i = 0; i <= xTicks; i++) {
+      const bal = view.domain.min + ((view.domain.max - view.domain.min) * i) / xTicks;
       const px = x(bal);
-      node.appendChild(svg('text', { class: 'axis-text', x: px, y: pad.top + plotH + 18, 'text-anchor': 'middle' }, fmt.short(bal)));
+      // The end labels would otherwise hang off the plot once the type is big.
+      const at = i === 0 ? 'start' : i === xTicks ? 'end' : 'middle';
+      node.appendChild(svg('text', { class: 'axis-text', x: px, y: pad.top + plotH + 4 + 14 * k, 'text-anchor': at }, fmt.short(bal)));
     }
     node.appendChild(svg('text', { class: 'chart-axis-title', x: pad.left, y: H - 6 },
       'Remaining principal'));
-    node.appendChild(svg('text', { class: 'chart-axis-title', x: pad.left - 10, y: pad.top - 12, 'text-anchor': 'end' }, 'Monthly'));
+    // The title outgrows its gutter once the type is large, so on narrow screens
+    // it hangs from the left edge instead of ending at the axis.
+    node.appendChild(svg('text', {
+      class: 'chart-axis-title', x: narrow ? 2 : pad.left - 10 * k,
+      y: pad.top - 12 * k, 'text-anchor': narrow ? 'start' : 'end',
+    }, 'Monthly'));
   }
 
   // --- tables ---------------------------------------------------------------
@@ -664,6 +716,22 @@ const Mortgage = (() => {
     }
 
     const move = () => { renderReadout(); renderChart(); renderCliffs(); renderHorizon(); };
+
+    // Label sizing is computed from the rendered width, so the chart has to be
+    // redrawn when the window changes size. Becoming visible is already covered:
+    // the app calls render() when the mortgage tab is shown, and a hidden chart
+    // measures zero, which renderChart() treats as "no scaling".
+    let resizeTimer = null;
+    let lastWidth = 0;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const w = $('chart-mortgage').getBoundingClientRect().width;
+        if (!view.cfg || !w || Math.abs(w - lastWidth) < 4) return;
+        lastWidth = w;
+        renderChart();
+      }, 120);
+    });
 
     $('balance-slider').addEventListener('input', (ev) => {
       view.balance = Number(ev.target.value);

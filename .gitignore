@@ -12,3 +12,8 @@ node_modules/
 
 # Atomic-write leftovers
 *.tmp
+
+# Runtime state when running in a container. STATE_DIR points here, the
+# container writes it as uid 1000, and git must never own these files —
+# a checkout that the container can write is a checkout git cannot update.
+state/

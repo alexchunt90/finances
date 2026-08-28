@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Finances</title>
 <link rel="stylesheet" href="styles.css" />
-<link rel="icon" href="data:," />
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Ctext%20y%3D%22.9em%22%20font-size%3D%2290%22%3E%F0%9F%92%B8%3C%2Ftext%3E%3C%2Fsvg%3E" />
 </head>
 <body>
 
@@ -88,27 +88,6 @@
 
   <section class="block">
     <div class="block-head">
-      <h2 class="eyebrow">The waterfall</h2>
-      <p class="block-note">Order money leaves take-home. Sinking funds are never reduced.</p>
-    </div>
-    <div class="table-scroll">
-      <table class="ledger">
-        <thead><tr><th>Tier</th><th class="r">Amount</th><th class="r">Running total</th><th>Note</th></tr></thead>
-        <tbody id="waterfall-rows"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="block">
-    <div class="block-head">
-      <h2 class="eyebrow">Spending targets — pace</h2>
-      <p class="block-note" id="pace-note"></p>
-    </div>
-    <div id="pace-rows" class="pace-rows"></div>
-  </section>
-
-  <section class="block">
-    <div class="block-head">
       <h2 class="eyebrow">Log spending</h2>
       <p class="block-note">Entries persist as you go and archive when the period closes. Anything without a category of its own goes under Other.</p>
     </div>
@@ -145,6 +124,27 @@
       </table>
     </div>
     <p class="verdict" id="oneoff-settlement"></p>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">The waterfall</h2>
+      <p class="block-note">Order money leaves take-home. Sinking funds are never reduced.</p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Tier</th><th class="r">Amount</th><th class="r">Running total</th><th>Note</th></tr></thead>
+        <tbody id="waterfall-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <h2 class="eyebrow">Spending targets — pace</h2>
+      <p class="block-note" id="pace-note"></p>
+    </div>
+    <div id="pace-rows" class="pace-rows"></div>
   </section>
 
   <section class="block" id="close-block">
@@ -247,7 +247,7 @@
     </div>
     <div class="table-scroll">
       <table class="ledger">
-        <thead><tr><th>Name</th><th class="r">Per period</th><th class="r">Annual bill</th><th>Due</th><th class="r">Fund</th><th class="r">Should be</th><th>Coverage</th></tr></thead>
+        <thead><tr><th>Name</th><th class="r">Per period</th><th class="r">Annual bill</th><th>Due</th><th class="r">Fund</th><th class="r">Should be</th></tr></thead>
         <tbody id="sinking-rows"></tbody>
       </table>
     </div>
@@ -314,6 +314,40 @@
     </div>
   </section>
 
+  <section class="block" id="history-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Long-term progress</h2>
+      <p class="block-note" id="history-note"></p>
+    </div>
+    <div class="chart-shell"><svg id="chart-history" viewBox="0 0 760 320" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="scrub-row">
+      <span class="scrub-hint" id="scrub-hint">Drag either chart to read a date.</span>
+      <button type="button" class="jump-button" id="scrub-reset" hidden>Back to latest</button>
+    </div>
+  </section>
+
+  <section class="block" id="composition-block">
+    <div class="block-head">
+      <h2 class="eyebrow">What it is made of</h2>
+      <p class="block-note" id="composition-note"></p>
+    </div>
+    <div class="chart-shell"><svg id="chart-composition" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="legend" id="composition-legend"></div>
+  </section>
+
+  <section class="block" id="events-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Events</h2>
+      <p class="block-note">One-off moves that shift the line without being saving or spending. Each draws a dashed rule on both charts above — click one to read that date.</p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th class="nowrap">Date</th><th>Event</th><th class="r nowrap">Amount</th><th></th></tr></thead>
+        <tbody id="event-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="block">
     <div class="block-head">
       <h2 class="eyebrow">Accounts</h2>
@@ -325,29 +359,6 @@
         <tbody id="account-rows"></tbody>
       </table>
     </div>
-  </section>
-
-  <section class="block" id="history-block">
-    <div class="block-head">
-      <h2 class="eyebrow">Long-term progress</h2>
-      <p class="block-note" id="history-note"></p>
-    </div>
-    <div class="chart-shell"><svg id="chart-history" viewBox="0 0 760 320" preserveAspectRatio="xMidYMid meet"></svg></div>
-    <div class="table-scroll">
-      <table class="ledger">
-        <thead><tr><th class="nowrap">Date</th><th>Event</th><th class="r nowrap">Amount</th></tr></thead>
-        <tbody id="event-rows"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="block" id="composition-block">
-    <div class="block-head">
-      <h2 class="eyebrow">What it is made of</h2>
-      <p class="block-note" id="composition-note"></p>
-    </div>
-    <div class="chart-shell"><svg id="chart-composition" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg></div>
-    <div class="legend" id="composition-legend"></div>
   </section>
 
   <section class="block">

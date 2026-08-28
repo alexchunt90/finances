@@ -13,7 +13,10 @@ const VIEWS = ['budget', 'expenses', 'assets', 'projections', 'mortgage'];
 // Which column each sortable table is ordered by. In memory only — a sort is a
 // way of looking at the data, not a property of it.
 const sorts = { committed: { col: 'perPeriod', key: 'perPeriod', dir: 'desc' } };
-const state = { config: null, periods: [], history: { snapshots: [], events: [] }, view: 'budget' };
+// `scrub` is the snapshot date the asset charts are being read at, or null for
+// the latest. It is view state, not saved: it belongs to the session, not the
+// file.
+const state = { config: null, periods: [], history: { snapshots: [], events: [] }, view: 'budget', scrub: null };
 
 // --- formatting -------------------------------------------------------------
 
@@ -175,6 +178,12 @@ async function flush() {
       if (what === 'config') {
         const res = await request('api/config', 'PUT', state.config);
         state.config.version = res.version;
+      } else if (what === 'history') {
+        const res = await request('api/history/events', 'PUT', {
+          version: state.history.version,
+          events: state.history.events,
+        });
+        state.history.version = res.version;
       } else {
         const period = state.periods.find((p) => p.id === what);
         if (period) {
@@ -338,8 +347,46 @@ const svgEl = (tag, attrs = {}) => {
   return n;
 };
 
+/**
+ * Chart type is sized in viewBox user units, so a chart scaled down to phone
+ * width shrinks its labels along with the drawing — an 11px label on a 375px
+ * screen lands at about 4px. Measure the rendered width and hand back the
+ * inverse ratio: --chart-k counter-scales the label CSS, and the caller uses k
+ * to widen the gutters those labels sit in. Capped at 2.6x, which is what a
+ * 375px phone needs; past that the gutters eat the plot. A chart on a hidden
+ * tab measures zero, which means no scaling until it is next drawn visible.
+ */
+function chartScale(svg, W) {
+  const rendered = svg.getBoundingClientRect().width;
+  const k = rendered > 0 ? Math.min(Math.max(W / rendered, 1), 2.6) : 1;
+  svg.style.setProperty('--chart-k', k.toFixed(3));
+  return k;
+}
+
+/**
+ * Thin a row of ticks down to the ones that fit. The space a label needs grows
+ * with the type, so an axis that carries eleven year labels on a laptop drops
+ * to four on a phone. Labels are nudged inside `bounds` rather than allowed to
+ * hang off the plot, and the spacing test runs on where each one actually ends
+ * up — clamping an edge label inward is what makes it crowd its neighbour.
+ * Returns ticks with `x` set to the position to draw at, centred.
+ */
+function spacedTicks(items, k, bounds) {
+  const kept = [];
+  let lastRight = -Infinity;
+  for (const it of items) {
+    const half = (String(it.text).length * 6.6 * k) / 2;
+    const cx = Math.min(Math.max(it.x, bounds.min + half), bounds.max - half);
+    if (cx - half - lastRight < 12 * k) continue;
+    lastRight = cx + half;
+    kept.push({ ...it, x: cx });
+  }
+  return kept;
+}
+
 function emptyChart(svg, label) {
   svg.replaceChildren();
+  chartScale(svg, 760);
   const t = svgEl('text', { x: 380, y: 130, 'text-anchor': 'middle', class: 'chart-empty' });
   t.textContent = label;
   svg.append(t);
@@ -350,8 +397,13 @@ function lineChart(svg, points, { target = null, xLabel = 'periods ahead' } = {}
   svg.replaceChildren();
   if (!points.length) return emptyChart(svg, 'no data');
 
-  const pad = { l: 62, r: 16, t: 14, b: 30 };
   const W = 760, H = 260;
+  const k = chartScale(svg, W);
+  const narrow = k > 1.3;
+  // Only the part of the gutter holding text scales; the breathing room does not.
+  // The bottom carries two rows — the ticks and the caption — so it needs more
+  // room than the charts that only carry one.
+  const pad = { l: 14 + 48 * k, r: 16, t: 14 * k, b: 20 + 20 * k };
   const values = points.map((p) => p.balance).concat(target != null ? [target, 0] : [0]);
   const lo = Math.min(...values), hi = Math.max(...values);
   const span = hi - lo || 1;
@@ -362,7 +414,7 @@ function lineChart(svg, points, { target = null, xLabel = 'periods ahead' } = {}
 
   for (const frac of [0, 0.5, 1]) {
     const v = lo + span * frac;
-    const t = svgEl('text', { x: pad.l - 8, y: y(v) + 4, 'text-anchor': 'end', class: 'axis-text' });
+    const t = svgEl('text', { x: pad.l - 8 * k, y: y(v) + 4 * k, 'text-anchor': 'end', class: 'axis-text' });
     t.textContent = fmt.short(v);
     svg.append(t);
   }
@@ -370,7 +422,10 @@ function lineChart(svg, points, { target = null, xLabel = 'periods ahead' } = {}
   if (lo < 0 && hi > 0) svg.append(svgEl('line', { x1: pad.l, y1: y(0), x2: W - pad.r, y2: y(0), class: 'zero-line' }));
   if (target != null) {
     svg.append(svgEl('line', { x1: pad.l, y1: y(target), x2: W - pad.r, y2: y(target), class: 'target-line' }));
-    const t = svgEl('text', { x: W - pad.r, y: y(target) - 6, 'text-anchor': 'end', class: 'axis-text' });
+    // Sits above its line, unless the target is the top of the range — then
+    // there is no room above and the label goes under it instead.
+    const ty = Math.max(y(target) - 6 * k, pad.t + 10 * k);
+    const t = svgEl('text', { x: W - pad.r, y: ty, 'text-anchor': 'end', class: 'axis-text' });
     t.textContent = `target ${fmt.short(target)}`;
     svg.append(t);
   }
@@ -380,12 +435,20 @@ function lineChart(svg, points, { target = null, xLabel = 'periods ahead' } = {}
   svg.append(svgEl('path', { d: `${line} L${x(points.length - 1).toFixed(1)},${base} L${x(0).toFixed(1)},${base} Z`, class: 'series-area' }));
   svg.append(svgEl('path', { d: line, class: 'series-line' }));
 
-  for (const i of [0, Math.floor(points.length / 2), points.length - 1]) {
-    const t = svgEl('text', { x: x(i), y: H - pad.b + 18, 'text-anchor': 'middle', class: 'axis-text' });
+  const ends = [0, Math.floor(points.length / 2), points.length - 1];
+  ends.forEach((i, n) => {
+    // Anchor the end ticks inward, or large type hangs off the plot.
+    const at = n === 0 ? 'start' : n === ends.length - 1 ? 'end' : 'middle';
+    const t = svgEl('text', { x: x(i), y: H - pad.b + 4 + 14 * k, 'text-anchor': at, class: 'axis-text' });
     t.textContent = i === 0 ? 'now' : `+${points[i].period}`;
     svg.append(t);
-  }
-  const lbl = svgEl('text', { x: W - pad.r, y: H - 6, 'text-anchor': 'end', class: 'axis-text' });
+  });
+  // The caption shares the last tick's corner. There is room for both under the
+  // plot at laptop size; at phone type there is not, so it moves to the top
+  // left — the one corner the ticks and the target label both leave empty.
+  const lbl = svgEl('text', narrow
+    ? { x: pad.l, y: 12 * k, 'text-anchor': 'start', class: 'axis-text' }
+    : { x: W - pad.r, y: H - 6, 'text-anchor': 'end', class: 'axis-text' });
   lbl.textContent = xLabel;
   svg.append(lbl);
 }
@@ -394,8 +457,9 @@ function barChart(svg, bars) {
   svg.replaceChildren();
   if (!bars.length) return emptyChart(svg, 'no closed periods yet');
 
-  const pad = { l: 62, r: 16, t: 14, b: 34 };
   const W = 760, H = 260;
+  const k = chartScale(svg, W);
+  const pad = { l: 14 + 48 * k, r: 16, t: 14 * k, b: 16 + 18 * k };
   const hi = Math.max(...bars.map((b) => b.value), 0);
   const lo = Math.min(...bars.map((b) => b.value), 0);
   const span = hi - lo || 1;
@@ -405,11 +469,13 @@ function barChart(svg, bars) {
   svg.append(svgEl('line', { x1: pad.l, y1: y(0), x2: W - pad.r, y2: y(0), class: 'axis-line' }));
   for (const frac of [0, 0.5, 1]) {
     const v = lo + span * frac;
-    const t = svgEl('text', { x: pad.l - 8, y: y(v) + 4, 'text-anchor': 'end', class: 'axis-text' });
+    const t = svgEl('text', { x: pad.l - 8 * k, y: y(v) + 4 * k, 'text-anchor': 'end', class: 'axis-text' });
     t.textContent = fmt.short(v);
     svg.append(t);
   }
 
+  // Eight date labels fit on a laptop; at phone type they would run together.
+  const every = Math.ceil(bars.length / Math.max(2, Math.round(8 / k)));
   bars.forEach((b, i) => {
     const top = y(Math.max(b.value, 0));
     const h = Math.abs(y(b.value) - y(0));
@@ -418,8 +484,8 @@ function barChart(svg, bars) {
       width: bw * 0.64, height: Math.max(1, h),
       class: `bar${b.value < 0 ? ' is-negative' : ''}`,
     }));
-    if (i % Math.ceil(bars.length / 8) === 0) {
-      const t = svgEl('text', { x: pad.l + i * bw + bw / 2, y: H - pad.b + 18, 'text-anchor': 'middle', class: 'axis-text' });
+    if (i % every === 0) {
+      const t = svgEl('text', { x: pad.l + i * bw + bw / 2, y: H - pad.b + 4 + 14 * k, 'text-anchor': 'middle', class: 'axis-text' });
       t.textContent = fmt.day(b.label);
       svg.append(t);
     }
@@ -940,17 +1006,20 @@ function renderExpenses() {
       due.append(el('span', `flag ${s.urgent ? 'warn' : 'soft'}`, ` ${s.daysUntilDue}d`));
     }
     tr.append(due);
-    tr.append(el('td', 'r', fmt.usd(s.balance)));
+    // The fund balance is derived (opening allocation + contributions since,
+    // less draws), so an edit lands on the opening allocation: shift it by the
+    // difference and the whole derivation comes out at the number typed. That
+    // is what paying an annual bill from the fund looks like here.
+    tr.append(numberCell(s.balance, (v) => {
+      const b = cfg.buckets.find((x) => x.id === s.bucketId);
+      if (!b) return;
+      b.opening = Model.round2((b.opening || 0) + (v - s.balance));
+      queueSave('config');
+      render();
+    }));
     tr.append(el('td', 'r', s.required != null ? fmt.usd(s.required) : '—'));
-    const cov = el('td');
-    if (s.status === 'no-due-date') cov.append(el('span', 'flag warn', 'due date needed'));
-    else if (s.urgent) cov.append(el('span', 'flag warn', `top up ${fmt.usd(s.shortfall)} now`));
-    else if (s.status === 'short') cov.append(el('span', 'flag warn', `short ${fmt.usd(s.shortfall)}`));
-    else cov.append(el('span', 'flag gain', `covered · ${s.periodsLeft} periods`));
-    tr.append(cov);
     sbody.append(tr);
   }
-  const topUp = Model.round2(Model.sum(coverage, (s) => s.shortfall || 0));
   const stot = el('tr', 'is-total');
   stot.append(el('td', null, `${coverage.length} annual bills`));
   stot.append(el('td', 'r', fmt.usd(sinking)));
@@ -958,10 +1027,6 @@ function renderExpenses() {
   stot.append(el('td'));
   stot.append(el('td', 'r', fmt.usd(Model.sum(coverage, (s) => s.balance))));
   stot.append(el('td', 'r', fmt.usd(Model.sum(coverage, (s) => s.required || 0))));
-  const totCell = el('td');
-  totCell.append(el('span', `flag ${topUp > 0 ? 'warn' : 'gain'}`,
-    topUp > 0 ? `top up ${fmt.usd(topUp)} to be on schedule` : 'on schedule'));
-  stot.append(totCell);
   sbody.append(stot);
 
   // 3 — targets
@@ -1104,22 +1169,27 @@ function checkCell(value, onChange) {
  * vested-equity liquidation or a house down payment moves the line by six
  * figures without being saving or spending.
  */
-function timeChart(svg, series, events = []) {
+function timeChart(svg, series, events = [], scrubDate = null) {
   svg.replaceChildren();
+  svg.__axis = null;
   if (!series.length) return emptyChart(svg, 'no history');
 
-  const pad = { l: 66, r: 16, t: 14, b: 34 };
   const W = 760, H = 320;
+  const k = chartScale(svg, W);
+  const pad = { l: 18 + 48 * k, r: 16, t: 14 * k, b: 16 + 18 * k };
   const t0 = PayDates.parse(series[0].date);
   const t1 = PayDates.parse(series[series.length - 1].date);
   const hi = Math.max(...series.map((p) => p.value));
   const x = (d) => pad.l + ((PayDates.parse(d) - t0) / (t1 - t0 || 1)) * (W - pad.l - pad.r);
   const y = (v) => pad.t + (1 - v / (hi || 1)) * (H - pad.t - pad.b);
+  // Handed to the pointer code so it can turn a click into a date without
+  // knowing how the gutters were sized.
+  svg.__axis = { t0, t1, x0: pad.l, x1: W - pad.r, W };
 
   svg.append(svgEl('line', { x1: pad.l, y1: H - pad.b, x2: W - pad.r, y2: H - pad.b, class: 'axis-line' }));
   for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
     const v = hi * frac;
-    const t = svgEl('text', { x: pad.l - 8, y: y(v) + 4, 'text-anchor': 'end', class: 'axis-text' });
+    const t = svgEl('text', { x: pad.l - 8 * k, y: y(v) + 4 * k, 'text-anchor': 'end', class: 'axis-text' });
     t.textContent = fmt.short(v);
     svg.append(t);
   }
@@ -1134,11 +1204,40 @@ function timeChart(svg, series, events = []) {
   svg.append(svgEl('path', { d: `${line} L${x(series[series.length - 1].date).toFixed(1)},${y(0)} L${x(series[0].date).toFixed(1)},${y(0)} Z`, class: 'series-area' }));
   svg.append(svgEl('path', { d: line, class: 'series-line' }));
 
+  const at = scrubDate && series.find((p) => p.date === scrubDate);
+  if (at) {
+    const sx = x(at.date);
+    const sy = y(at.value);
+    svg.append(svgEl('line', { x1: sx, y1: pad.t, x2: sx, y2: H - pad.b, class: 'chart-scrub-line' }));
+    svg.append(svgEl('circle', { cx: sx, cy: sy, r: 4 + k, class: 'chart-scrub-dot' }));
+    // Flip to the inside near the right edge, which is where the latest
+    // snapshot sits — the position the chart opens on.
+    const nearRight = sx > pad.l + (W - pad.l - pad.r) * 0.62;
+    const anchor = nearRight ? 'end' : 'start';
+    const dx = (nearRight ? -10 : 10) * k;
+    // Ride above the dot, unless that would push either line out of the frame.
+    const top = Math.min(
+      Math.max(sy - 12 * k, pad.t + 12 * k),
+      H - pad.b - 18 * k,
+    );
+    const v = svgEl('text', { x: sx + dx, y: top, 'text-anchor': anchor, class: 'chart-scrub-label' });
+    v.textContent = fmt.usd0(at.value);
+    svg.append(v);
+    // Far enough below the figure that the two lines do not touch once the
+    // type is counter-scaled up on a phone.
+    const d = svgEl('text', { x: sx + dx, y: top + 15 * k, 'text-anchor': anchor, class: 'chart-scrub-date' });
+    d.textContent = at.date;
+    svg.append(d);
+  }
+
   const years = [...new Set(series.map((p) => p.date.slice(0, 4)))];
-  for (const yr of years) {
+  const ticks = years.map((yr) => {
     const first = series.find((p) => p.date.startsWith(yr));
-    const t = svgEl('text', { x: x(first.date), y: H - pad.b + 18, 'text-anchor': 'middle', class: 'axis-text' });
-    t.textContent = yr;
+    return { x: x(first.date), text: yr };
+  });
+  for (const tick of spacedTicks(ticks, k, { min: pad.l, max: W - pad.r })) {
+    const t = svgEl('text', { x: tick.x, y: H - pad.b + 4 + 14 * k, 'text-anchor': 'middle', class: 'axis-text' });
+    t.textContent = tick.text;
     svg.append(t);
   }
 }
@@ -1149,18 +1248,21 @@ function timeChart(svg, series, events = []) {
  * part you could actually reach — its thickness is the answer to a different
  * question than the total height.
  */
-function stackChart(svg, snapshots, series, events = []) {
+function stackChart(svg, snapshots, series, events = [], scrubDate = null) {
   svg.replaceChildren();
+  svg.__axis = null;
   if (!snapshots.length || !series.length) return emptyChart(svg, 'no history');
 
-  const pad = { l: 66, r: 16, t: 14, b: 34 };
   const W = 760, H = 340;
+  const k = chartScale(svg, W);
+  const pad = { l: 18 + 48 * k, r: 16, t: 14 * k, b: 16 + 18 * k };
   const t0 = PayDates.parse(snapshots[0].date);
   const t1 = PayDates.parse(snapshots[snapshots.length - 1].date);
   const totals = snapshots.map((sn) => series.reduce((a, s) => a + (sn.balances[s.id] || 0), 0));
   const hi = Math.max(...totals, 1);
   const x = (d) => pad.l + ((PayDates.parse(d) - t0) / (t1 - t0 || 1)) * (W - pad.l - pad.r);
   const y = (v) => pad.t + (1 - v / hi) * (H - pad.t - pad.b);
+  svg.__axis = { t0, t1, x0: pad.l, x1: W - pad.r, W };
 
   let lower = new Array(snapshots.length).fill(0);
   for (const s of series) {
@@ -1181,9 +1283,16 @@ function stackChart(svg, snapshots, series, events = []) {
     svg.append(svgEl('line', { x1: ex, y1: pad.t, x2: ex, y2: H - pad.b, class: 'event-rule' }));
   }
 
+  // No value labels on the bands — eleven of them would bury the chart. The
+  // rule marks the instant and the legend carries the figures.
+  if (scrubDate && snapshots.some((sn) => sn.date === scrubDate)) {
+    const sx = x(scrubDate);
+    svg.append(svgEl('line', { x1: sx, y1: pad.t, x2: sx, y2: H - pad.b, class: 'chart-scrub-line' }));
+  }
+
   svg.append(svgEl('line', { x1: pad.l, y1: H - pad.b, x2: W - pad.r, y2: H - pad.b, class: 'axis-line' }));
   for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
-    const t = svgEl('text', { x: pad.l - 8, y: y(hi * frac) + 4, 'text-anchor': 'end', class: 'axis-text' });
+    const t = svgEl('text', { x: pad.l - 8 * k, y: y(hi * frac) + 4 * k, 'text-anchor': 'end', class: 'axis-text' });
     t.textContent = fmt.short(hi * frac);
     svg.append(t);
   }
@@ -1192,12 +1301,15 @@ function stackChart(svg, snapshots, series, events = []) {
   const spanDays = (t1 - t0) / PayDates.DAY;
   const key = spanDays > 550 ? (d) => d.slice(0, 4) : (d) => d.slice(0, 7);
   const label = spanDays > 550
-    ? (k) => k
-    : (k) => `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+k.slice(5, 7) - 1]} ${k.slice(2, 4)}`;
-  for (const k of [...new Set(snapshots.map((sn) => key(sn.date)))]) {
-    const first = snapshots.find((sn) => key(sn.date) === k);
-    const t = svgEl('text', { x: x(first.date), y: H - pad.b + 18, 'text-anchor': 'middle', class: 'axis-text' });
-    t.textContent = label(k);
+    ? (b) => b
+    : (b) => `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+b.slice(5, 7) - 1]} ${b.slice(2, 4)}`;
+  const ticks = [...new Set(snapshots.map((sn) => key(sn.date)))].map((bucket) => {
+    const first = snapshots.find((sn) => key(sn.date) === bucket);
+    return { x: x(first.date), text: label(bucket) };
+  });
+  for (const tick of spacedTicks(ticks, k, { min: pad.l, max: W - pad.r })) {
+    const t = svgEl('text', { x: tick.x, y: H - pad.b + 4 + 14 * k, 'text-anchor': 'middle', class: 'axis-text' });
+    t.textContent = tick.text;
     svg.append(t);
   }
 }
@@ -1278,60 +1390,9 @@ function renderAssets() {
   tot.append(el('td'));
   body.append(tot);
 
-  // long-term progress
-  const snaps = state.history.snapshots || [];
-  const events = state.history.events || [];
-  const series = snaps.map((sn) => ({
-    date: sn.date,
-    value: Model.round2(Object.values(sn.balances).reduce((a, b) => a + b, 0)),
-  }));
-  if (series.length) {
-    const first = series[0], lastPt = series[series.length - 1];
-    const years = PayDates.daysBetween(first.date, lastPt.date) / 365.25;
-    $('history-note').textContent =
-      `${series.length} snapshots from ${first.date} to ${lastPt.date}. ` +
-      `${fmt.usd0(first.value)} → ${fmt.usd0(lastPt.value)} over ${years.toFixed(1)} years. ` +
-      `Dashed rules mark transfers and one-time events, which move the line without being saving.`;
-  } else {
-    $('history-note').textContent = 'No history loaded.';
-  }
-  timeChart($('chart-history'), series, events);
+  renderAssetHistory();
 
-  // composition
-  const composition = compositionSeries(cfg);
-  stackChart($('chart-composition'), snaps, composition, events);
-  if (snaps.length) {
-    const lastBal = snaps[snaps.length - 1].balances;
-    const grouped = (g) => Model.round2(Model.sum(composition.filter((x) => x.group === g), (x) => lastBal[x.id] || 0));
-    $('composition-note').textContent =
-      `The same total, split by account. Illiquid sits at the bottom in cool shades — ` +
-      `${fmt.usd0(grouped('Illiquid'))} today — with liquid stacked above it in warm — ${fmt.usd0(grouped('Liquid'))}. ` +
-      `The warm band is what you could actually reach. Dashed rules mark the same events as the chart above.`;
-
-    const legend = $('composition-legend');
-    legend.replaceChildren();
-    for (const g of ['Illiquid', 'Liquid']) {
-      legend.append(el('div', 'legend-group', g));
-      for (const sr of composition.filter((x) => x.group === g)) {
-        const item = el('div', 'legend-item');
-        const sw = el('span', 'legend-swatch');
-        sw.style.background = sr.color;
-        item.append(sw, document.createTextNode(sr.name), el('span', 'legend-value', fmt.usd0(lastBal[sr.id] || 0)));
-        legend.append(item);
-      }
-    }
-  }
-
-  const ebody = $('event-rows');
-  ebody.replaceChildren();
-  // Sorted here so a hand-added event can be appended anywhere in the file.
-  for (const ev of [...events].sort((a, b) => a.date.localeCompare(b.date))) {
-    const tr = el('tr');
-    tr.append(el('td', 'nowrap', ev.date));
-    tr.append(el('td', null, ev.note));
-    tr.append(el('td', 'r nowrap', fmt.usd(ev.amount)));
-    ebody.append(tr);
-  }
+  renderEvents();
 
   // contribution per period
   barChart($('chart-contrib'), closedPeriods().map((p) => ({
@@ -1366,6 +1427,180 @@ function renderAssets() {
       m.append(el('span', `flag ${r.warn ? 'warn' : 'soft'}`, r.meaning));
       tr.append(m);
       rbody.append(tr);
+    }
+  }
+}
+
+/**
+ * The event log: annotations that move the line without being saving or
+ * spending. Editable, because a decade of history accumulates them and there is
+ * no other way in — they live in history.json beside the snapshots.
+ */
+function renderEvents() {
+  const events = state.history.events || [];
+  const ebody = $('event-rows');
+  ebody.replaceChildren();
+
+  // Sorted here so a hand-added event can be appended anywhere in the file.
+  for (const ev of [...events].sort((a, b) => a.date.localeCompare(b.date))) {
+    const tr = el('tr');
+    tr.append(el('td', 'nowrap', ev.date));
+
+    // The note is the handle: clicking it reads the charts at that moment.
+    const noteCell = el('td');
+    const jump = el('button', 'link-text', ev.note);
+    jump.type = 'button';
+    jump.title = 'Read the charts at this date';
+    jump.addEventListener('click', () => scrubTo(PayDates.parse(ev.date), { scroll: true }));
+    noteCell.append(jump);
+    tr.append(noteCell);
+
+    tr.append(el('td', 'r nowrap', fmt.usd(ev.amount)));
+    tr.append(removeCell(() => {
+      state.history.events = events.filter((x) => x !== ev);
+      queueSave('history');
+      renderAssetHistory();
+      renderEvents();
+    }));
+    ebody.append(tr);
+  }
+
+  // Add row. Kept in the table rather than a form above it so the columns line
+  // up with what you are adding to.
+  const add = el('tr', 'is-entry');
+  const date = document.createElement('input');
+  date.type = 'date';
+  const note = document.createElement('input');
+  note.type = 'text';
+  note.placeholder = 'What happened';
+  const amount = document.createElement('input');
+  amount.type = 'number';
+  amount.step = '0.01';
+  amount.placeholder = '0.00';
+
+  const submit = () => {
+    if (!date.value || !note.value.trim()) {
+      notice('An event needs a date and a description.');
+      return;
+    }
+    state.history.events = [...events, {
+      date: date.value,
+      note: note.value.trim(),
+      amount: Number(amount.value) || 0,
+    }];
+    queueSave('history');
+    renderAssetHistory();
+    renderEvents();
+  };
+  // Enter anywhere in the row adds it, the way the entry forms elsewhere behave.
+  for (const input of [date, note, amount]) {
+    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') submit(); });
+  }
+
+  const dateCell = el('td', 'nowrap'); dateCell.append(date);
+  const noteCell = el('td'); noteCell.append(note);
+  const amountCell = el('td', 'r nowrap'); amountCell.append(amount);
+  const addCell = el('td');
+  const button = el('button', 'link-button', '+');
+  button.type = 'button';
+  button.title = 'Add event';
+  button.addEventListener('click', submit);
+  addCell.append(button);
+  add.append(dateCell, noteCell, amountCell, addCell);
+  ebody.append(add);
+}
+
+/**
+ * The snapshot nearest a moment in time. The charts can only be read where a
+ * snapshot exists, so every way of choosing a position — dragging, or clicking
+ * an event whose date falls between two snapshots — lands through here.
+ */
+function nearestSnapshot(t) {
+  const snaps = state.history.snapshots || [];
+  let best = null, bestGap = Infinity;
+  for (const sn of snaps) {
+    const gap = Math.abs(PayDates.parse(sn.date) - t);
+    if (gap < bestGap) { bestGap = gap; best = sn; }
+  }
+  return best;
+}
+
+/** Move the scrub to a date and show the charts it just changed. */
+function scrubTo(t, { scroll = false } = {}) {
+  const hit = nearestSnapshot(t);
+  if (!hit) return;
+  state.scrub = hit.date;
+  renderAssetHistory();
+  // Composition, not the line chart: the legend is what carries the figures at
+  // the chosen date, and the line chart sits just above it anyway.
+  if (scroll) {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    $('composition-block').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  }
+}
+
+/**
+ * The two date-axis charts and everything that reads off them. Split out of
+ * renderAssets so that dragging the scrub redraws the charts and the legend
+ * without rebuilding the account tables underneath on every pointer move.
+ */
+function renderAssetHistory() {
+  const cfg = state.config;
+  const snaps = state.history.snapshots || [];
+  const events = state.history.events || [];
+  const series = snaps.map((sn) => ({
+    date: sn.date,
+    value: Model.round2(Object.values(sn.balances).reduce((a, b) => a + b, 0)),
+  }));
+
+  // A scrub that no longer matches a snapshot — history reloaded underneath it
+  // — reads as "latest" rather than as nothing.
+  const scrub = snaps.some((sn) => sn.date === state.scrub) ? state.scrub : null;
+  const shown = scrub || (snaps.length ? snaps[snaps.length - 1].date : null);
+  const at = shown ? snaps.find((sn) => sn.date === shown) : null;
+  const when = scrub ? `on ${shown}` : 'today';
+
+  $('scrub-reset').hidden = !scrub;
+  $('scrub-hint').textContent = scrub
+    ? `Reading ${shown}. Drag either chart to move, or double-click to return to the latest.`
+    : 'Drag either chart to read the totals at a date.';
+
+  if (series.length) {
+    const first = series[0], lastPt = series[series.length - 1];
+    const years = PayDates.daysBetween(first.date, lastPt.date) / 365.25;
+    $('history-note').textContent =
+      `${series.length} snapshots from ${first.date} to ${lastPt.date}. ` +
+      `${fmt.usd0(first.value)} → ${fmt.usd0(lastPt.value)} over ${years.toFixed(1)} years. ` +
+      `Dashed rules mark transfers and one-time events, which move the line without being saving.`;
+  } else {
+    $('history-note').textContent = 'No history loaded.';
+  }
+  timeChart($('chart-history'), series, events, scrub);
+
+  const composition = compositionSeries(cfg);
+  stackChart($('chart-composition'), snaps, composition, events, scrub);
+  if (at) {
+    const bal = at.balances;
+    const grouped = (g) => Model.round2(Model.sum(composition.filter((x) => x.group === g), (x) => bal[x.id] || 0));
+    $('composition-note').textContent =
+      `The same total, split by account. Illiquid sits at the bottom in cool shades — ` +
+      `${fmt.usd0(grouped('Illiquid'))} ${when} — with liquid stacked above it in warm — ${fmt.usd0(grouped('Liquid'))}. ` +
+      `The warm band is what you could actually reach. Dashed rules mark the events logged below.`;
+
+    const legend = $('composition-legend');
+    legend.replaceChildren();
+    for (const g of ['Illiquid', 'Liquid']) {
+      legend.append(el('div', 'legend-group', g));
+      for (const sr of composition.filter((x) => x.group === g)) {
+        const value = bal[sr.id] || 0;
+        // An account that did not exist yet reads as an empty row rather than
+        // disappearing, so the legend does not reflow as the scrub moves.
+        const item = el('div', `legend-item${value ? '' : ' is-zero'}`);
+        const sw = el('span', 'legend-swatch');
+        sw.style.background = sr.color;
+        item.append(sw, document.createTextNode(sr.name), el('span', 'legend-value', fmt.usd0(value)));
+        legend.append(item);
+      }
     }
   }
 }
@@ -1590,6 +1825,62 @@ function wire() {
 
   // The calculator owns its own inputs; it just needs a way to persist.
   Mortgage.wire(() => queueSave('config'));
+
+  // Both asset charts share a date axis, so a drag on either reads the same
+  // instant out of both — the line gets a label, the stack updates its legend.
+  for (const id of ['chart-history', 'chart-composition']) {
+    const chart = $(id);
+    const setFromPointer = (ev) => {
+      const axis = chart.__axis;
+      const snaps = state.history.snapshots || [];
+      if (!axis || !snaps.length) return;
+      const box = chart.getBoundingClientRect();
+      if (!box.width) return;
+      // Client pixels → user units → the fraction of the plotted date range.
+      const units = ((ev.clientX - box.left) / box.width) * axis.W;
+      const frac = (units - axis.x0) / (axis.x1 - axis.x0 || 1);
+      const t = axis.t0 + frac * (axis.t1 - axis.t0);
+      const hit = nearestSnapshot(t);
+      if (!hit || state.scrub === hit.date) return;
+      state.scrub = hit.date;
+      renderAssetHistory();
+    };
+    chart.addEventListener('pointerdown', (ev) => {
+      // Read first, then try to capture: a failed capture must not cost the
+      // click that caused it. Capture is what keeps the drag alive once the
+      // pointer leaves the chart.
+      setFromPointer(ev);
+      try { chart.setPointerCapture(ev.pointerId); } catch { /* drag ends at the edge */ }
+    });
+    chart.addEventListener('pointermove', (ev) => {
+      if (chart.hasPointerCapture(ev.pointerId)) setFromPointer(ev);
+    });
+    chart.addEventListener('dblclick', () => {
+      state.scrub = null;
+      renderAssetHistory();
+    });
+  }
+
+  $('scrub-reset').addEventListener('click', () => {
+    state.scrub = null;
+    renderAssetHistory();
+  });
+
+  // Chart label sizing is computed from the rendered width, so a window resize
+  // has to redraw whichever chart-bearing view is on screen. Switching tabs is
+  // already covered — the view renders on the way in. The mortgage tab wires
+  // its own, since the calculator redraws more than the chart.
+  let chartResizeTimer = null;
+  let lastChartWidth = window.innerWidth;
+  window.addEventListener('resize', () => {
+    clearTimeout(chartResizeTimer);
+    chartResizeTimer = setTimeout(() => {
+      if (Math.abs(window.innerWidth - lastChartWidth) < 8) return;
+      lastChartWidth = window.innerWidth;
+      if (state.view === 'assets') renderAssets();
+      else if (state.view === 'projections') renderProjections();
+    }, 150);
+  });
 
   $('refresh-rate').addEventListener('click', () => refreshMortgageSources());
 

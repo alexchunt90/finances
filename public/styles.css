@@ -412,7 +412,7 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .chart-shell { background: var(--card-sunk); border-radius: var(--radius); padding: 8px; }
 .chart-shell svg { display: block; width: 100%; height: auto; }
 .axis-line { stroke: var(--rule); stroke-width: 1; }
-.axis-text { font-family: var(--mono); font-size: 11px; fill: var(--ink-faint); }
+.axis-text { font-family: var(--mono); font-size: calc(11px * var(--chart-k, 1)); fill: var(--ink-faint); }
 .series-line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .series-area { fill: var(--accent-wash); }
 .target-line { stroke: var(--ink-soft); stroke-width: 1; stroke-dasharray: 4 3; }
@@ -421,12 +421,64 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .zero-line { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 3; }
 .bar { fill: var(--accent); }
 .bar.is-negative { fill: var(--warn); }
+/* --- scrubbing ----------------------------------------------------------- */
+/*
+ * pan-y rather than none: a vertical swipe still scrolls the page, while a
+ * horizontal drag across the chart reads a date out of it.
+ */
+#chart-history, #chart-composition {
+  touch-action: pan-y; cursor: crosshair;
+  /* A drag across the chart is a scrub, not a text selection — without this
+     the axis labels highlight as the pointer sweeps over them. */
+  -webkit-user-select: none; user-select: none;
+}
+.scrub-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 12px; }
+.scrub-hint { font-size: 12.5px; color: var(--ink-faint); }
+/* Accent, not ink: the event rules are already dashed ink, and the cursor has
+   to be distinguishable from them at a glance. Pairs with the accent dot. */
+.chart-scrub-line { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 2 3; }
+.chart-scrub-dot { fill: var(--accent); stroke: var(--card-sunk); stroke-width: 2; }
+/* Outlined in the panel colour so the figures stay readable over the fill. */
+.chart-scrub-label {
+  font-family: var(--mono); font-size: calc(12px * var(--chart-k, 1)); font-weight: 600; fill: var(--ink);
+  paint-order: stroke; stroke: var(--card-sunk); stroke-width: calc(3.5px * var(--chart-k, 1));
+  stroke-linejoin: round;
+}
+.chart-scrub-date {
+  font-family: var(--display); font-size: calc(10px * var(--chart-k, 1)); letter-spacing: 0.1em;
+  text-transform: uppercase; fill: var(--ink-faint);
+  paint-order: stroke; stroke: var(--card-sunk); stroke-width: calc(3px * var(--chart-k, 1));
+  stroke-linejoin: round;
+}
+.legend-item.is-zero { opacity: 0.45; }
+
+/* An event description is a control, not a label: it reads the charts at that
+   date. Styled as text so the table still scans as a table. */
+.link-text {
+  background: none; border: 0; padding: 0; margin: 0;
+  font: inherit; color: var(--ink); text-align: left; cursor: pointer;
+  border-bottom: 1px dotted var(--rule);
+}
+.link-text:hover { color: var(--accent); border-bottom-color: var(--accent-dim); }
+.ledger tr.is-entry td { background: var(--card-sunk); }
+/* The shared ledger input caps at 130px, which suits a figure but not a
+   description — the entry row's text field takes the whole column instead. */
+.ledger tr.is-entry input[type="text"] { width: 100%; max-width: none; }
+.ledger tr.is-entry input[type="number"] { width: 110px; text-align: right; }
+
 /* --- mortgage ------------------------------------------------------------ */
+/*
+ * Chart type is sized in viewBox user units, so a chart scaled down to phone
+ * width shrinks its labels with it. Every renderer measures its own rendered
+ * width and sets --chart-k to the inverse ratio, which holds the labels at a
+ * roughly constant physical size. The fallback of 1 leaves a chart alone if it
+ * is ever drawn without one.
+ */
 
 .chart-grid { stroke: var(--rule-soft); stroke-width: 1; }
 .chart-axis { stroke: var(--rule); stroke-width: 1; }
 .chart-axis-title {
-  font-family: var(--display); font-size: 11px; letter-spacing: 0.12em;
+  font-family: var(--display); font-size: calc(11px * var(--chart-k, 1)); letter-spacing: 0.12em;
   text-transform: uppercase; fill: var(--ink-faint);
 }
 .chart-fill { fill: var(--accent-wash); }
@@ -436,23 +488,24 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .chart-recast { fill: none; stroke: var(--recast); stroke-width: 2.5; stroke-linejoin: round; }
 .chart-now { stroke: var(--ink-soft); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .chart-now-label {
-  font-family: var(--display); font-size: 11px; letter-spacing: 0.1em;
+  font-family: var(--display); font-size: calc(11px * var(--chart-k, 1)); letter-spacing: 0.1em;
   text-transform: uppercase; fill: var(--ink-soft);
 }
 .chart-cross { stroke: var(--gain); stroke-width: 1.5; }
 .chart-cross-label {
-  font-family: var(--display); font-size: 11px; letter-spacing: 0.1em;
+  font-family: var(--display); font-size: calc(11px * var(--chart-k, 1)); letter-spacing: 0.1em;
   text-transform: uppercase; fill: var(--gain);
 }
-.chart-cliff-label { font-family: var(--mono); font-size: 11px; fill: var(--gain); }
+.chart-cliff-label { font-family: var(--mono); font-size: calc(11px * var(--chart-k, 1)); fill: var(--gain); }
 .chart-marker-line { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 3; }
 .chart-marker-dot { stroke: var(--card-sunk); stroke-width: 2; }
 .chart-marker-dot.is-refi { fill: var(--accent); }
 .chart-marker-dot.is-recast { fill: var(--recast); }
 /* Outlined in the panel colour so the figures stay readable over the fill. */
 .chart-marker-label {
-  font-family: var(--mono); font-size: 12px; font-weight: 600;
-  paint-order: stroke; stroke: var(--card-sunk); stroke-width: 3.5px; stroke-linejoin: round;
+  font-family: var(--mono); font-size: calc(12px * var(--chart-k, 1)); font-weight: 600;
+  paint-order: stroke; stroke: var(--card-sunk); stroke-width: calc(3.5px * var(--chart-k, 1));
+  stroke-linejoin: round;
 }
 .chart-marker-label.is-refi { fill: var(--accent); }
 .chart-marker-label.is-recast { fill: var(--recast); }
@@ -518,7 +571,7 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .verdict.is-gain { color: var(--gain); }
 .verdict.is-cost { color: var(--warn); }
 
-.chart-empty { font-family: var(--display); font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--ink-faint); }
+.chart-empty { font-family: var(--display); font-size: calc(13px * var(--chart-k, 1)); letter-spacing: 0.1em; text-transform: uppercase; fill: var(--ink-faint); }
 
 @media (min-width: 900px) {
   .frame { grid-template-columns: repeat(2, minmax(0, 1fr)); }

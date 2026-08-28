@@ -198,6 +198,13 @@ certificate, reachable from any device on the tailnet and nowhere else. Never us
 `tailscale funnel` here — that puts it on the public internet, and the app has no
 login.
 
+**Browser DNS-over-HTTPS breaks tailnet names.** MagicDNS lives in the system
+resolver; a browser doing its own DoH bypasses it and never sees the tailnet.
+In Chrome this shows up as `ERR_BLOCKED_BY_CLIENT` on subresources while the
+page itself loads — which looks exactly like an ad blocker and is not. Turn off
+Settings → Privacy → Security → **Use secure DNS** on any machine that reaches
+the app by its `.ts.net` name.
+
 ## Files
 
 | | |

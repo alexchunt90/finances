@@ -268,6 +268,31 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { saved: true, version: merged.version });
     }
 
+    // Events are annotations on the history — a vest liquidated, a down payment
+    // — hand-added through the Assets tab. Snapshots are not writable here:
+    // those arrive at period close, and a stale tab must not rewrite a decade
+    // of balances on its way to adding a note.
+    if (pathname === '/api/history/events' && req.method === 'PUT') {
+      const incoming = JSON.parse(await readBody(req) || '{}');
+      if (!Array.isArray(incoming.events)) return json(res, 400, { error: 'events must be an array' });
+      const current = await readHistory();
+
+      const held = Number(current.version) || 0;
+      const sent = Number(incoming.version) || 0;
+      if (sent !== held) {
+        return json(res, 409, {
+          error: `history was changed elsewhere (you have v${sent}, the file is v${held})`,
+          version: held,
+          history: current,
+        });
+      }
+
+      const merged = { ...current, events: incoming.events, version: held + 1 };
+      await fsp.mkdir(DATA_DIR, { recursive: true });
+      await writeJsonAtomic(HISTORY_PATH, merged);
+      return json(res, 200, { saved: true, version: merged.version });
+    }
+
     // Upsert one period. The browser owns period identity and all arithmetic.
     const periodMatch = pathname.match(/^\/api\/periods\/([\w-]+)$/);
     if (periodMatch && req.method === 'PUT') {

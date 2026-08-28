@@ -157,8 +157,28 @@ cp data/*.json state/data/
 docker compose up -d --build
 ```
 
-The compose file publishes on `127.0.0.1` only and expects `tailscale serve` in
-front of it, so the port is never open on a public interface. The container runs
+The compose file publishes on `127.0.0.1` only and expects `tailscale serve` or
+a reverse proxy in front of it, so the port is never open on a public interface.
+
+### Serving under a path prefix
+
+Every asset and API reference is **relative** (`styles.css`, `api/state`), not
+root-absolute, so the app works at `/` or under a prefix like `/finances`. Two
+conditions have to hold:
+
+1. The proxy **strips** the prefix — Caddy's `handle_path`, not `handle`. The
+   server matches exact paths (`pathname === '/api/state'`) and joins the
+   pathname onto `public/`, so it must receive unprefixed requests.
+2. The prefix **redirects to a trailing slash**. Relative URLs resolve against
+   the current directory: at `/finances/` they become `/finances/styles.css`, but
+   at `/finances` they become `/styles.css` and miss the route entirely.
+
+```caddyfile
+redir /finances /finances/
+handle_path /finances/* {
+	reverse_proxy 127.0.0.1:4174
+}
+``` The container runs
 as uid 1000, so `state/` must be writable by that uid:
 
 ```bash

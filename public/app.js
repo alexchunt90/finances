@@ -173,12 +173,12 @@ async function flush() {
   try {
     for (const what of jobs) {
       if (what === 'config') {
-        const res = await request('/api/config', 'PUT', state.config);
+        const res = await request('api/config', 'PUT', state.config);
         state.config.version = res.version;
       } else {
         const period = state.periods.find((p) => p.id === what);
         if (period) {
-          const res = await request(`/api/periods/${period.id}`, 'PUT', period);
+          const res = await request(`api/periods/${period.id}`, 'PUT', period);
           period.version = res.version;
         }
       }
@@ -218,7 +218,7 @@ async function request(url, method, body) {
  * merge two histories automatically.
  */
 async function reloadState() {
-  const payload = await request('/api/state', 'GET');
+  const payload = await request('api/state', 'GET');
   state.config = payload.config;
   state.periods = payload.periods || [];
   state.history = payload.history || { snapshots: [], events: [] };
@@ -837,7 +837,7 @@ async function closePeriod() {
     mortgageBalance: period.mortgageBalance ?? state.config.mortgage?.currentLoan?.balance ?? null,
   };
 
-  const closeRes = await request(`/api/periods/${period.id}`, 'PUT', period);
+  const closeRes = await request(`api/periods/${period.id}`, 'PUT', period);
   period.version = closeRes.version;
 
   const next = makePeriod(today());
@@ -846,7 +846,7 @@ async function closePeriod() {
     if (d) Object.assign(next, makePeriod(d.available));
   }
   state.periods.push(next);
-  const nextRes = await request(`/api/periods/${next.id}`, 'PUT', next);
+  const nextRes = await request(`api/periods/${next.id}`, 'PUT', next);
   next.version = nextRes.version;
 
   const swept = sweep.map((s) => `${fmt.usd(s.amount)} → ${s.target}`).join(', ');
@@ -1393,7 +1393,7 @@ async function refreshMortgageSources({ auto = false } = {}) {
   btn.disabled = true;
   btn.textContent = auto ? 'Fetching…' : 'Refreshing…';
   try {
-    const payload = await request('/api/state?live=1', 'GET');
+    const payload = await request('api/state?live=1', 'GET');
     state.config.mortgage = payload.config.mortgage;
     state.meta = payload.meta || {};
     Mortgage.setConfig(state.config.mortgage, state.meta);
@@ -1599,7 +1599,7 @@ function wire() {
 
 async function boot() {
   try {
-    const payload = await request('/api/state', 'GET');
+    const payload = await request('api/state', 'GET');
     state.config = payload.config;
     state.meta = payload.meta || {};
     state.problems = payload.problems || [];

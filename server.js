@@ -235,7 +235,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     // Everything the browser needs to render, in one round trip.
-    if (pathname === '/api/state' && req.method === 'GET') {
+    if (pathname === '/api/state' && (req.method === 'GET' || req.method === 'HEAD')) {
       const [config, periods, history] = await Promise.all([readConfig(), readPeriods(), readHistory()]);
       // Live lookups are opt-in so the ordinary page load never waits on a
       // network call; the Mortgage tab's refresh button asks for them.
@@ -308,7 +308,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'Not found' });
-    if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed' });
+    // HEAD is GET without a body. Proxies, health checks and uptime monitors
+    // all use it, and rejecting it makes a working route look broken.
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      return json(res, 405, { error: 'Method not allowed' });
+    }
 
     const rel = pathname === '/' ? '/index.html' : pathname;
     const filePath = path.join(PUBLIC_DIR, path.normalize(rel));
@@ -317,9 +321,10 @@ const server = http.createServer(async (req, res) => {
     const data = await fsp.readFile(filePath);
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream',
+      'Content-Length': data.length,
       'Cache-Control': 'no-store',
     });
-    return res.end(data);
+    return res.end(req.method === 'HEAD' ? undefined : data);
   } catch (err) {
     if (err.code === 'ENOENT') return json(res, 404, { error: 'Not found' });
     console.error(err);

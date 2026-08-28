@@ -14,16 +14,13 @@
  * ------------------------------------------------------------------------- */
 
 const http = require('node:http');
+const os = require('node:os');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const CONFIG_PATH = path.join(ROOT, 'config.json');
-const DATA_DIR = path.join(ROOT, 'data');
-const PERIODS_PATH = path.join(DATA_DIR, 'periods.json');
-const HISTORY_PATH = path.join(DATA_DIR, 'history.json');
 const ENV_PATH = path.join(ROOT, '.env');
 
 // --- .env -------------------------------------------------------------------
@@ -55,7 +52,23 @@ function loadEnv(file) {
 
 loadEnv(ENV_PATH);
 
+// Where the writable state lives. Defaults to the project directory, which is
+// the layout when running from a checkout. Point STATE_DIR at a mounted volume
+// to run in a container — note that writes go through a temp file and a rename,
+// which fails against a bind-mounted *file*, so this must be a directory.
+const STATE_DIR = process.env.STATE_DIR ? path.resolve(process.env.STATE_DIR) : ROOT;
+const CONFIG_PATH = path.join(STATE_DIR, 'config.json');
+const DATA_DIR = path.join(STATE_DIR, 'data');
+const PERIODS_PATH = path.join(DATA_DIR, 'periods.json');
+const HISTORY_PATH = path.join(DATA_DIR, 'history.json');
+
 const PORT = Number(process.env.PORT || 4174);
+
+// Listens on every interface so the app is reachable from a phone on the same
+// network, or over a Tailscale/WireGuard link. There is no authentication, so
+// anyone who can reach the port can read and rewrite everything — set
+// HOST=127.0.0.1 in .env to go back to this machine only.
+const HOST = process.env.HOST || '0.0.0.0';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -234,9 +247,25 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/config' && req.method === 'PUT') {
       const incoming = JSON.parse(await readBody(req) || '{}');
       const current = await readConfig();
+
+      // Optimistic concurrency. The client echoes back the version it loaded;
+      // if the file has moved on since, another writer got there first and this
+      // request would silently overwrite them. Reject instead, and hand back
+      // the current state so the client can reload rather than guess.
+      const held = Number(current.version) || 0;
+      const sent = Number(incoming.version) || 0;
+      if (sent !== held) {
+        return json(res, 409, {
+          error: `config was changed elsewhere (you have v${sent}, the file is v${held})`,
+          version: held,
+          config: current,
+        });
+      }
+
       // `sources` is hand-edited in the file, not through the UI.
-      await writeJsonAtomic(CONFIG_PATH, { ...current, ...incoming, sources: current.sources });
-      return json(res, 200, { saved: true });
+      const merged = { ...current, ...incoming, sources: current.sources, version: held + 1 };
+      await writeJsonAtomic(CONFIG_PATH, merged);
+      return json(res, 200, { saved: true, version: merged.version });
     }
 
     // Upsert one period. The browser owns period identity and all arithmetic.
@@ -248,12 +277,26 @@ const server = http.createServer(async (req, res) => {
 
       const periods = await readPeriods();
       const existing = periods.findIndex((p) => p.id === id);
+      const stored = existing === -1 ? null : periods[existing];
 
       // A closed period is history. Refuse to overwrite one, so a stale tab
       // cannot silently rewrite totals you already reconciled.
-      if (existing !== -1 && periods[existing].status === 'closed' && incoming.status !== 'closed') {
-        return json(res, 409, { error: `period ${id} is closed` });
+      if (stored && stored.status === 'closed' && incoming.status !== 'closed') {
+        return json(res, 409, { error: `period ${id} is closed`, period: stored });
       }
+
+      // The open period gets the same version check as config: two devices
+      // logging spending at once would otherwise clobber each other.
+      const held = stored ? Number(stored.version) || 0 : 0;
+      const sent = Number(incoming.version) || 0;
+      if (stored && sent !== held) {
+        return json(res, 409, {
+          error: `period ${id} was changed elsewhere (you have v${sent}, the file is v${held})`,
+          version: held,
+          period: stored,
+        });
+      }
+      incoming.version = held + 1;
 
       if (existing === -1) periods.push(incoming);
       else periods[existing] = incoming;
@@ -261,7 +304,7 @@ const server = http.createServer(async (req, res) => {
       periods.sort((a, b) => a.start.localeCompare(b.start));
       await fsp.mkdir(DATA_DIR, { recursive: true });
       await writeJsonAtomic(PERIODS_PATH, periods);
-      return json(res, 200, { saved: true, id });
+      return json(res, 200, { saved: true, id, version: incoming.version });
     }
 
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'Not found' });
@@ -306,8 +349,22 @@ if (!fs.existsSync(CONFIG_PATH)) {
   process.exit(1);
 }
 
-server.listen(PORT, '127.0.0.1', () => {
+/** Every non-internal IPv4 address, so the reachable URLs can be printed. */
+function lanAddresses() {
+  return Object.values(os.networkInterfaces())
+    .flat()
+    .filter((n) => n && n.family === 'IPv4' && !n.internal)
+    .map((n) => n.address);
+}
+
+server.listen(PORT, HOST, () => {
   console.log(`Finances → http://127.0.0.1:${PORT}`);
+  if (HOST !== '127.0.0.1') {
+    for (const address of lanAddresses()) {
+      console.log(`         → http://${address}:${PORT}`);
+    }
+    console.log('Reachable from other devices on this network. No login — set HOST=127.0.0.1 to restrict.');
+  }
   console.log(`Config:  ${path.relative(process.cwd(), CONFIG_PATH)}`);
   console.log(`History: ${path.relative(process.cwd(), PERIODS_PATH)}`);
 });

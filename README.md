@@ -9,8 +9,15 @@ browser — so the two can merge later.
 node server.js
 ```
 
-Then open http://127.0.0.1:4174. Nothing leaves the machine; there are no
-network calls at all.
+Then open http://127.0.0.1:4174. It also listens on every interface, so it is
+reachable from a phone on the same network, or from anywhere over a Tailscale /
+WireGuard link — the startup banner prints the addresses.
+
+**There is no authentication.** Anyone who can reach the port can read and
+rewrite every figure in the app. That is fine on a trusted home network or a
+private mesh; it is not fine on shared wifi, and the app should never be exposed
+directly to the internet. Set `HOST=127.0.0.1` in `.env` to restrict it to this
+machine.
 
 ## The pay calendar
 
@@ -135,6 +142,42 @@ shades stack from the bottom for illiquid accounts, warm shades above them for
 liquid ones, each assigned in order. Add entries if you add accounts — the
 palettes wrap rather than running out.
 
+## Running on a server
+
+`STATE_DIR` points at the writable state — `config.json` plus `data/`. It
+defaults to the project directory, so a checkout needs no configuration. In a
+container it must be a **mounted directory, not a mounted file**: saves write a
+temp file and rename over the target, and rename fails against a bind-mounted
+file.
+
+```bash
+mkdir -p state/data
+cp config.json state/
+cp data/*.json state/data/
+docker compose up -d --build
+```
+
+The compose file publishes on `127.0.0.1` only and expects `tailscale serve` in
+front of it, so the port is never open on a public interface. The container runs
+as uid 1000, so `state/` must be writable by that uid:
+
+```bash
+sudo chown -R 1000:1000 state
+```
+
+Then on the host:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+sudo tailscale serve --bg 4174
+```
+
+That publishes it at `https://<hostname>.<tailnet>.ts.net` with a real
+certificate, reachable from any device on the tailnet and nowhere else. Never use
+`tailscale funnel` here — that puts it on the public internet, and the app has no
+login.
+
 ## Files
 
 | | |
@@ -148,6 +191,14 @@ palettes wrap rather than running out.
 Writes go through a temp file and a rename, and periods are upserted by id, so a
 bug in the open period cannot take closed history with it. Closed periods refuse
 to be overwritten.
+
+`config.json` and each period carry a `version` that increments on every write.
+A client echoes back the version it loaded; if the file has moved on since, the
+server returns **409** with the current state rather than letting a stale tab
+overwrite whoever wrote first. The browser reports the conflict, reloads from
+disk, and tells you the unsaved edit was dropped — losing one edit is better than
+silently losing someone else's. This is what makes it safe to open the app on
+more than one device.
 
 ## Mortgage
 

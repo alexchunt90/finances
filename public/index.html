@@ -76,7 +76,8 @@
       </div>
       <dl class="readout-stats">
         <div><dt>Day</dt><dd data-num id="stat-day">—</dd></div>
-        <div><dt>Variable spent</dt><dd data-num id="stat-varspent">—</dd></div>
+        <div><dt>Planned spending</dt><dd data-num id="stat-planned-spend">—</dd></div>
+        <div><dt>Unplanned spending</dt><dd data-num id="stat-unplanned-spend">—</dd></div>
         <div><dt>Projected by close</dt><dd data-num id="stat-projected">—</dd></div>
         <div><dt>One-off bills</dt><dd data-num id="stat-oneoff">—</dd></div>
       </dl>
@@ -90,15 +91,17 @@
       <h2 class="eyebrow">The waterfall</h2>
       <p class="block-note">Order money leaves take-home. Sinking funds are never reduced.</p>
     </div>
-    <table class="ledger">
-      <thead><tr><th>Tier</th><th class="r">Amount</th><th class="r">Running total</th><th>Note</th></tr></thead>
-      <tbody id="waterfall-rows"></tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="ledger">
+        <thead><tr><th>Tier</th><th class="r">Amount</th><th class="r">Running total</th><th>Note</th></tr></thead>
+        <tbody id="waterfall-rows"></tbody>
+      </table>
+    </div>
   </section>
 
   <section class="block">
     <div class="block-head">
-      <h2 class="eyebrow">Variable targets — pace</h2>
+      <h2 class="eyebrow">Spending targets — pace</h2>
       <p class="block-note" id="pace-note"></p>
     </div>
     <div id="pace-rows" class="pace-rows"></div>
@@ -155,6 +158,11 @@
         <tbody id="close-rows"></tbody>
       </table>
     </div>
+    <div class="close-extra">
+      <label for="close-mortgage">Mortgage principal <span class="optional">optional</span></label>
+      <input type="number" id="close-mortgage" step="0.01" />
+    </div>
+
     <h3 class="eyebrow" style="margin-top:20px">Flows this period not already in the waterfall</h3>
     <p class="block-note">Bonuses, one-time deposits, withdrawals. A transfer between two accounts nets to zero and never counts as a contribution.</p>
     <form class="entry-row" id="flow-form">
@@ -247,7 +255,7 @@
 
   <section class="block">
     <div class="block-head">
-      <h2 class="eyebrow">3 · Variable targets</h2>
+      <h2 class="eyebrow">3 · Spending targets</h2>
       <p class="block-note">Monthly amounts. Prorated by the real length of each period, which runs 13 to 19 days.</p>
     </div>
     <div class="table-scroll">

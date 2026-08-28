@@ -1,0 +1,28 @@
+services:
+  finances:
+    build: .
+    container_name: finances
+    restart: unless-stopped
+
+    # Published on loopback only. Caddy (or `tailscale serve`) fronts it, so the
+    # port is never open on a public interface — which matters, because the app
+    # has no authentication of its own.
+    ports:
+      - "127.0.0.1:4174:4174"
+
+    volumes:
+      # Writable state. Must be a DIRECTORY mount: saves write a temp file and
+      # rename over the target, and rename fails against a bind-mounted file.
+      # The container runs as uid 1000, so: sudo chown -R 1000:1000 state
+      - ./state:/state
+
+      # Source mounted read-only so edits do not need an image rebuild.
+      # public/ is picked up on a browser refresh; server.js needs
+      # `docker compose restart finances`. Drop these two for a sealed image.
+      - ./server.js:/app/server.js:ro
+      - ./public:/app/public:ro
+
+    # FRED_API_KEY for the Mortgage tab's live rate. Optional.
+    env_file:
+      - path: .env
+        required: false

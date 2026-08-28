@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+!.env.example
+data
+config.json
+state
+node_modules
+*.md
+.claude
+.DS_Store

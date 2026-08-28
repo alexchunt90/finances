@@ -697,7 +697,12 @@ const Mortgage = (() => {
     if (!view.balance) view.balance = cfg.currentLoan.balance;
   }
 
-  return { setConfig, wire, render: () => { fillControls(); renderAll(); }, quote, current, cliffTargets, findCrossing };
+  /** Move the slider to a new balance — used when the loan balance changes. */
+  function setBalance(value) {
+    if (Number.isFinite(value)) view.balance = value;
+  }
+
+  return { setConfig, setBalance, wire, render: () => { fillControls(); renderAll(); }, quote, current, cliffTargets, findCrossing };
 })();
 
 if (typeof module !== 'undefined') module.exports = Mortgage;

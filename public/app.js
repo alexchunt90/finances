@@ -173,17 +173,26 @@ async function flush() {
   try {
     for (const what of jobs) {
       if (what === 'config') {
-        await request('/api/config', 'PUT', state.config);
+        const res = await request('/api/config', 'PUT', state.config);
+        state.config.version = res.version;
       } else {
         const period = state.periods.find((p) => p.id === what);
-        if (period) await request(`/api/periods/${period.id}`, 'PUT', period);
+        if (period) {
+          const res = await request(`/api/periods/${period.id}`, 'PUT', period);
+          period.version = res.version;
+        }
       }
     }
     status('saved');
     setTimeout(() => { if (!pending.size) status(''); }, 1600);
   } catch (err) {
     status('');
-    notice(`Could not save: ${err.message}`);
+    if (err.status === 409) {
+      notice(`${err.message}. Reloaded from disk — your last edit was not saved.`);
+      await reloadState().catch(() => {});
+    } else {
+      notice(`Could not save: ${err.message}`);
+    }
   }
 }
 
@@ -194,8 +203,28 @@ async function request(url, method, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(payload.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.payload = payload;
+    throw err;
+  }
   return payload;
+}
+
+/**
+ * Pull everything fresh and redraw. Used after a version conflict: another
+ * device wrote first, so the safe move is to take their state rather than
+ * merge two histories automatically.
+ */
+async function reloadState() {
+  const payload = await request('/api/state', 'GET');
+  state.config = payload.config;
+  state.periods = payload.periods || [];
+  state.history = payload.history || { snapshots: [], events: [] };
+  applyTheme(state.config.theme);
+  Mortgage.setConfig(state.config.mortgage, state.meta);
+  render();
 }
 
 function notice(text) {
@@ -432,19 +461,29 @@ function renderBudget() {
   perDay(settlement.plannedLeft, 'daily-planned');
   $('unspent-caption').textContent =
     `Take-home less ${fmt.usd(Model.committedTotal(cfg))} of bills, ${fmt.usd(wf.savingsTotal)} of planned savings, ` +
-    `and the full ${fmt.usd(pace.budget)} variable budget` +
+    `and ${fmt.usd(pace.budget)} in planned spending` +
     (pace.overage > 0 ? `, then ${fmt.usd(pace.overage)} of category overspend on top.` : '.') +
+    (settlement.borrowed > 0
+      ? ` ${fmt.usd(settlement.borrowed)} of that was covered by categories running behind pace.`
+      : '') +
     (settlement.surprises > 0 ? ` ${fmt.usd(settlement.surprises)} of surprise bills draws on this first.` : '');
 
   $('big-unused').textContent = fmt.bare(settlement.plannedLeft);
   const overCats = pace.rows.filter((r) => r.overage > 0);
   $('unused-caption').textContent =
     `Category budget not yet spent, summed per category. Surprise bills never touch this. ` +
+    (settlement.borrowed > 0
+      ? `${fmt.usd(settlement.borrowed)} has been lent to cover overspending elsewhere, taken only from categories behind their pace. `
+      : '') +
     (overCats.length
-      ? `${overCats.map((r) => `${r.name} is ${fmt.usd(r.overage)} over`).join(', ')} — that comes out of unplanned instead.`
+      ? `${overCats.map((r) => `${r.name} is ${fmt.usd(r.overage)} over`).join(', ')}.`
       : `Nothing is over its category budget yet.`);
   $('stat-day').textContent = `${days.elapsed} / ${days.projected}`;
-  $('stat-varspent').textContent = fmt.usd(pace.spent);
+  // Split the same way the two pools are: spending that fits inside a category
+  // budget draws on planned, anything past it — plus surprise bills — draws on
+  // unplanned. The two add up to everything logged this period.
+  $('stat-planned-spend').textContent = fmt.usd(Model.round2(pace.spent - pace.overage));
+  $('stat-unplanned-spend').textContent = fmt.usd(Model.round2(pace.overage + settlement.surprises));
   $('stat-projected').textContent = pace.reliable ? fmt.usd(pace.projected) : '—';
   $('stat-oneoff').textContent = fmt.usd(settlement.surprises);
   $('period-bar-fill').style.width = `${Math.min(100, (days.elapsed / days.projected) * 100)}%`;
@@ -452,7 +491,7 @@ function renderBudget() {
   const over = Model.round2(pace.projected - pace.budget);
   $('verdict').innerHTML = !pace.reliable
     ? `<strong>${fmt.usd(pace.spent)}</strong> of the ${fmt.usd(pace.budget)} prorated for a ${days.projected}-day period. ` +
-      `Too early to project — one large trip on day ${days.elapsed} would extrapolate to nonsense. Projections start on day ${pace.minDays}.`
+      `Projections start on day ${pace.minDays}.`
     : over > 0
       ? `At this pace variable spending lands <strong>${fmt.usd(over)} over</strong> the ${fmt.usd(pace.budget)} prorated for a ${days.projected}-day period.`
       : `At this pace variable spending lands <strong>${fmt.usd(-over)} under</strong> the ${fmt.usd(pace.budget)} prorated for a ${days.projected}-day period.`;
@@ -496,6 +535,19 @@ function renderBudget() {
     const fill = el('div', `pace-fill${r.spent > r.toDate ? ' is-over' : ''}`);
     fill.style.width = `${pct}%`;
     track.append(fill);
+
+    // A band immediately after what has been spent, showing budget this
+    // category lent to cover an overspend elsewhere. It is no longer available
+    // even though it has not been spent here.
+    const lent = settlement.lent?.[r.id] || 0;
+    if (lent > 0 && r.budget > 0) {
+      const band = el('div', 'pace-lent');
+      band.style.left = `${pct}%`;
+      band.style.width = `${Math.min(100 - pct, (lent / r.budget) * 100)}%`;
+      band.title = `${fmt.usd(lent)} lent to cover overspending elsewhere`;
+      track.append(band);
+    }
+
     const marker = el('div', 'pace-marker');
     marker.style.left = `${r.budget > 0 ? Math.min(100, (r.toDate / r.budget) * 100) : 0}%`;
     marker.dataset.label = 'on pace';
@@ -510,6 +562,14 @@ function renderBudget() {
       ? `${Math.round(r.budget > 0 ? (r.spent / r.budget) * 100 : 0)}% of target`
       : r.overBy > 0 ? `projects ${fmt.usd(r.overBy)} over` : `projects ${fmt.usd(-r.overBy)} under`;
     figures.append(proj);
+
+    if (lent > 0) {
+      figures.append(el('br'));
+      figures.append(el('span', 'lent', `${fmt.usd(lent)} lent`));
+    } else if (r.overage > 0) {
+      figures.append(el('br'));
+      figures.append(el('span', 'over', `${fmt.usd(r.overage)} over target`));
+    }
     row.append(figures);
     rows.append(row);
   }
@@ -697,6 +757,7 @@ function renderClose(period, prevBalances) {
   }
 
   updateGate();
+  renderMortgageField(period);
 
   const days = Model.periodDays(period, today());
   const nextDeposit = PayDates.nextDepositAfter(period.start);
@@ -706,6 +767,41 @@ function renderClose(period, prevBalances) {
     note += ` Heads up: a second deposit landed on ${fmt.day(secondDeposit.available)} while this period was still open, so two paychecks are sitting in one period.`;
   }
   $('close-note').textContent = note;
+}
+
+/**
+ * The mortgage balance is a liability, not one of the accounts, so it sits
+ * outside the balances table and never counts toward the "N of M entered" gate.
+ * Entering it updates the loan on the Mortgage tab straight away — that figure
+ * is a live setting rather than a period snapshot — and is also recorded on the
+ * period so the close has a note of what it was.
+ */
+function renderMortgageField(period) {
+  const input = $('close-mortgage');
+  if (!state.config.mortgage) return;
+
+  if (document.activeElement !== input) {
+    input.value = period.mortgageBalance != null ? period.mortgageBalance : '';
+  }
+
+  if (input.dataset.wired) return;
+  input.dataset.wired = '1';
+  input.addEventListener('input', () => {
+    const open = openPeriod();
+    if (input.value === '') {
+      delete open.mortgageBalance;
+      queueSave(open.id);
+      return;
+    }
+    const value = Number(input.value);
+    if (!Number.isFinite(value) || value < 0) return;
+    open.mortgageBalance = value;
+    state.config.mortgage.currentLoan.balance = value;
+    Mortgage.setBalance(value);
+    queueSave(open.id);
+    queueSave('config');
+    // No re-render here: rebuilding the form would drop focus mid-typing.
+  });
 }
 
 async function closePeriod() {
@@ -738,9 +834,11 @@ async function closePeriod() {
         .reduce((a, t) => a + t.amount, 0) + Model.contributed(period)
     ),
     windfalls: Model.windfalls(period),
+    mortgageBalance: period.mortgageBalance ?? state.config.mortgage?.currentLoan?.balance ?? null,
   };
 
-  await request(`/api/periods/${period.id}`, 'PUT', period);
+  const closeRes = await request(`/api/periods/${period.id}`, 'PUT', period);
+  period.version = closeRes.version;
 
   const next = makePeriod(today());
   if (next.id === period.id) {
@@ -748,7 +846,8 @@ async function closePeriod() {
     if (d) Object.assign(next, makePeriod(d.available));
   }
   state.periods.push(next);
-  await request(`/api/periods/${next.id}`, 'PUT', next);
+  const nextRes = await request(`/api/periods/${next.id}`, 'PUT', next);
+  next.version = nextRes.version;
 
   const swept = sweep.map((s) => `${fmt.usd(s.amount)} → ${s.target}`).join(', ');
   const surpriseLine = settlement.surprises > 0

@@ -83,7 +83,7 @@ const Model = (() => {
 
     const tiers = [
       { key: 'committed', label: 'Committed bills', amount: committedTotal(cfg), reducible: false, saving: false },
-      { key: 'targets', label: 'Variable targets', amount: targetsTotal(cfg, days), reducible: false, saving: false },
+      { key: 'targets', label: 'Spending targets', amount: targetsTotal(cfg, days), reducible: false, saving: false },
       // `base` is the configured figure and what an editor must bind to;
       // `amount` is what actually moves this period once recovery is applied.
       // Binding an input to `amount` would silently halve the saved value.
@@ -166,6 +166,9 @@ const Model = (() => {
         overBy: round2(projected - budget),
         overage: round2(Math.max(0, spent - budget)),
         unused: round2(Math.max(0, budget - spent)),
+        // How far behind its to-date share this category is. Spending less than
+        // your pace so far is slack that can cover an overspend elsewhere.
+        behind: round2(Math.max(0, toDate - spent)),
       };
     });
     // A single Costco run on day 2 extrapolates to an absurd month. Projections
@@ -182,6 +185,7 @@ const Model = (() => {
       projected: round2(sum(rows, (r) => r.projected)),
       overage: round2(sum(rows, (r) => r.overage)),
       unused: round2(sum(rows, (r) => r.unused)),
+      slack: round2(sum(rows, (r) => r.behind)),
     };
   }
 
@@ -199,23 +203,57 @@ const Model = (() => {
    */
   function settle(cfg, period, wf, pace) {
     const surprises = surpriseTotal(period);
-    const unplanned = round2(
-      period.takeHome - committedTotal(cfg) - wf.savingsTotal - pace.budget - pace.overage
+
+    // Pay not committed to a bill, a saving, or a category budget.
+    const base = round2(
+      period.takeHome - committedTotal(cfg) - wf.savingsTotal - pace.budget
     );
-    const fromPay = round2(Math.min(surprises, Math.max(0, unplanned)));
+
+    // Overspending a category first eats the unplanned pool. Only once that
+    // would go negative does it borrow from categories running behind their
+    // pace, and only down to their pace — never their whole remaining budget.
+    // This is a transfer between the two pools, so their sum is unchanged.
+    const shortfall = round2(Math.max(0, pace.overage - base));
+    const borrowed = round2(Math.min(shortfall, pace.slack));
+    const afterOverage = round2(base - pace.overage + borrowed);
+
+    // Surprise bills draw on what is left of unplanned, then the buffer. They
+    // never borrow from the planned pool.
+    const fromPay = round2(Math.min(surprises, Math.max(0, afterOverage)));
     const fromBuffer = round2(surprises - fromPay);
-    const unplannedLeft = round2(unplanned - surprises);
+
+    // Split the borrowed total across the categories that actually lent it,
+    // in proportion to how far behind pace each one is, so the pace bars can
+    // show where it came from. The last donor absorbs any rounding remainder.
+    const lent = {};
+    if (borrowed > 0 && pace.slack > 0) {
+      const donors = pace.rows.filter((r) => r.behind > 0);
+      let left = borrowed;
+      donors.forEach((r, i) => {
+        const share = i === donors.length - 1
+          ? left
+          : Math.min(r.behind, round2(borrowed * (r.behind / pace.slack)));
+        lent[r.id] = round2(Math.max(0, Math.min(share, r.behind, left)));
+        left = round2(left - lent[r.id]);
+      });
+    }
+
+    const unplannedLeft = round2(afterOverage - surprises);
+    const plannedLeft = round2(pace.unused - borrowed);
+
     return {
       surprises,
-      cushion: unplanned,
+      cushion: base,
+      borrowed,
+      lent,
       unplannedLeft,
-      plannedLeft: pace.unused,
-      totalLeft: round2(unplannedLeft + pace.unused),
+      plannedLeft,
+      totalLeft: round2(unplannedLeft + plannedLeft),
       fromPay, fromBuffer,
       left: unplannedLeft,
       // Whatever survives in either pool is real money at close. The unplanned
       // pool floors at zero because anything past that came from the buffer.
-      surplus: round2(Math.max(0, unplannedLeft) + pace.unused),
+      surplus: round2(Math.max(0, unplannedLeft) + plannedLeft),
     };
   }
 

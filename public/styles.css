@@ -138,6 +138,9 @@ body {
   max-width: var(--wide);
   margin: 0 auto;
   display: flex;
+  /* Five tabs do not fit a phone in one row; wrapping keeps them all reachable
+     rather than pushing the last ones off-screen. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding: 12px 0 0;
@@ -188,6 +191,11 @@ body {
   grid-template-columns: 1fr;
   gap: var(--gap);
 }
+
+/* Grid and flex children default to min-content width, so a wide table or form
+   row pushes its whole section past the viewport instead of scrolling inside
+   its own container. This is what lets .table-scroll actually work. */
+.frame > * { min-width: 0; }
 
 .console, .block {
   background: var(--card);
@@ -263,6 +271,18 @@ body {
 .pace-track { position: relative; height: 22px; background: var(--card-sunk); border-radius: var(--radius); overflow: hidden; }
 .pace-fill { height: 100%; background: var(--gain-wash); border-right: 2px solid var(--gain); }
 .pace-fill.is-over { background: var(--warn-wash); border-right-color: var(--warn); }
+/* Budget lent away: still unspent here, but no longer available. Hatched so it
+   reads as neither spent nor free. */
+.pace-lent {
+  position: absolute; top: 0; bottom: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--accent-wash) 0 5px,
+    transparent 5px 10px
+  );
+  border-right: 1px dashed var(--accent-dim);
+}
+
 .pace-marker { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--ink-soft); }
 .pace-marker::after {
   content: attr(data-label);
@@ -273,6 +293,7 @@ body {
 .pace-figures { font-family: var(--mono); font-size: 13px; text-align: right; color: var(--ink-soft); }
 .pace-figures .over { color: var(--warn); }
 .pace-figures .under { color: var(--gain); }
+.pace-figures .lent { color: var(--accent); }
 
 /* --- tables -------------------------------------------------------------- */
 
@@ -352,6 +373,24 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .link-button { background: none; border: none; padding: 0; color: var(--ink-faint); cursor: pointer; font-size: 15px; line-height: 1; }
 .link-button:hover { color: var(--warn); }
 
+.close-extra {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule-soft);
+  display: grid;
+  gap: 6px;
+  max-width: 460px;
+}
+.close-extra label {
+  font-family: var(--display); font-size: 11px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--accent);
+}
+.close-extra .optional { color: var(--ink-faint); }
+.close-extra input {
+  padding: 6px 8px; font-family: var(--mono); font-size: 14px;
+  background: var(--card-sunk); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: var(--radius);
+}
 .close-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; margin-top: 16px; }
 .save-status { font-size: 12px; color: var(--ink-faint); }
 
@@ -488,4 +527,32 @@ input:focus-visible, select:focus-visible, button:focus-visible {
      than squeezed into a column. Budget keeps the two-column grid. */
   #view-expenses .block, #view-assets .block,
   #view-projections .block, #view-mortgage .block { grid-column: 1 / -1; }
+}
+
+/* --- narrow screens ------------------------------------------------------ */
+/* Kept at the end of the file: these override base rules defined further up,
+   and at equal specificity the later rule wins. */
+
+@media (max-width: 600px) {
+  /* 160px + 190px of fixed columns cannot fit a phone, so the three parts of a
+     pace row stack rather than forcing the whole page wider than the viewport.
+     A page wider than the viewport is what makes mobile browsers scale the
+     layout down — and since each tab overflowed by a different amount, the
+     masthead visibly resized when switching tabs. */
+  .pace-row { grid-template-columns: 1fr; gap: 7px; }
+  .pace-figures { text-align: left; }
+
+  .readout-stats { gap: 16px 20px; }
+  body { padding: 0 16px 48px; }
+
+  /* Two per row, each filling half the column. A flex row leaves ragged space
+     on the right; an explicit 2-track grid divides the width exactly. */
+  .masthead-chips {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 10px;
+  }
+  .chip { min-width: 0; }
+  .chip-value { overflow-wrap: anywhere; }
 }

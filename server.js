@@ -361,6 +361,62 @@ function widgetBurndown(config, periods, todayISO) {
   };
 }
 
+/**
+ * The Assets tab's composition chart, as a payload a home-screen widget can
+ * draw. Same shape as widgetBurndown: the server does the arithmetic so the
+ * widget can never disagree with the page it mirrors.
+ *
+ * Snapshots are thinned to a drawing budget. A decade of them is more points
+ * than a phone-sized chart can resolve, and shipping all of them over a
+ * tailnet on every widget refresh costs more than it shows. The most recent
+ * snapshot is always kept exactly — it is the one the headline figures quote.
+ */
+function widgetComposition(config, history, todayISO, maxPoints = 160) {
+  const snaps = (history.snapshots || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const series = Model.compositionSeries(config);
+  if (!snaps.length) {
+    return { asOf: todayISO, generatedAt: new Date().toISOString(), empty: true, series: [], points: [] };
+  }
+
+  const stride = Math.max(1, Math.ceil(snaps.length / maxPoints));
+  const kept = snaps.filter((_, i) => i % stride === 0);
+  if (kept[kept.length - 1] !== snaps[snaps.length - 1]) kept.push(snaps[snaps.length - 1]);
+
+  const latest = snaps[snaps.length - 1];
+  const valueAt = (sn, id) => Model.round2(sn.balances[id] || 0);
+  const groupTotal = (sn, group) =>
+    Model.round2(series.filter((sr) => sr.group === group).reduce((a, sr) => a + valueAt(sn, sr.id), 0));
+  const total = (sn) => Model.round2(series.reduce((a, sr) => a + valueAt(sn, sr.id), 0));
+
+  // A year back, for the one line worth reading. Nearest snapshot on or before
+  // the anniversary — the history is not evenly spaced, so an index offset
+  // would mean different spans at different points in the file.
+  const yearAgoISO = PayDates.iso(PayDates.parse(latest.date) - 365 * PayDates.DAY);
+  let yearAgo = null;
+  for (const sn of snaps) if (sn.date <= yearAgoISO) yearAgo = sn;
+
+  for (const sr of series) sr.value = valueAt(latest, sr.id);
+
+  return {
+    asOf: todayISO,
+    generatedAt: new Date().toISOString(),
+    empty: false,
+    accent: config.theme?.accent || '#D4AF37',
+    latest: {
+      date: latest.date,
+      total: total(latest),
+      liquid: groupTotal(latest, 'Liquid'),
+      illiquid: groupTotal(latest, 'Illiquid'),
+    },
+    // Null when the history does not reach back a year yet, which the widget
+    // says rather than quoting a change over an unknown span.
+    yearAgo: yearAgo ? { date: yearAgo.date, total: total(yearAgo) } : null,
+    span: { from: snaps[0].date, to: latest.date, snapshots: snaps.length, plotted: kept.length },
+    series,
+    points: kept.map((sn) => ({ t: sn.date, v: series.map((sr) => valueAt(sn, sr.id)) })),
+  };
+}
+
 // --- server -----------------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
@@ -390,6 +446,13 @@ const server = http.createServer(async (req, res) => {
       const todayISO = asked && ISO_DATE.test(asked) ? asked : PayDates.todayISO();
       const [config, periods] = await Promise.all([readConfig(), readPeriods()]);
       return json(res, 200, widgetBurndown(config, periods, todayISO));
+    }
+
+    if (pathname === '/api/widget/composition' && (req.method === 'GET' || req.method === 'HEAD')) {
+      const asked = url.searchParams.get('today');
+      const todayISO = asked && ISO_DATE.test(asked) ? asked : PayDates.todayISO();
+      const [config, history] = await Promise.all([readConfig(), readHistory()]);
+      return json(res, 200, widgetComposition(config, history, todayISO));
     }
 
     if (pathname === '/api/config' && req.method === 'PUT') {

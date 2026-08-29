@@ -1556,23 +1556,9 @@ function stackChart(svg, snapshots, series, events = [], scrubDate = null, { tot
   }
 }
 
-/** Stack order: illiquid at the bottom in cool shades, liquid above in warm. */
-function compositionSeries(cfg) {
-  const cool = cfg.theme?.coolPalette || ['#1F3D5C', '#2F6285', '#4A93A6'];
-  const warm = cfg.theme?.warmPalette || ['#6E3410', '#AC601A', '#C67C1F', '#D4AF37', '#E4C86A', '#F1E0A8'];
-  const order = (ids) => ids.map((id) => cfg.accounts.find((a) => a.id === id)).filter(Boolean);
-
-  const illiquid = order(['k401', 'roth', 'equity'])
-    .concat(cfg.accounts.filter((a) => !a.liquid && !['k401', 'roth', 'equity'].includes(a.id)));
-  const liquidIds = ['emergency', 'buffer', 'sinking', 'longterm', 'other', 'etrade-self', 'etrade-robo', 'robinhood'];
-  const liquid = order(liquidIds)
-    .concat(cfg.accounts.filter((a) => a.liquid && !liquidIds.includes(a.id)));
-
-  return [
-    ...illiquid.map((a, i) => ({ id: a.id, name: a.name, group: 'Illiquid', color: cool[i % cool.length] })),
-    ...liquid.map((a, i) => ({ id: a.id, name: a.name, group: 'Liquid', color: warm[i % warm.length] })),
-  ];
-}
+// Lives in the model so the page and the home-screen widget draw the same
+// stack in the same order in the same colours.
+const compositionSeries = (cfg) => Model.compositionSeries(cfg);
 
 // --- assets view ------------------------------------------------------------
 

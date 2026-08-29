@@ -426,7 +426,7 @@ input:focus-visible, select:focus-visible, button:focus-visible {
  * pan-y rather than none: a vertical swipe still scrolls the page, while a
  * horizontal drag across the chart reads a date out of it.
  */
-#chart-history, #chart-composition {
+#chart-history, #chart-composition, #chart-savings-traj {
   touch-action: pan-y; cursor: crosshair;
   /* A drag across the chart is a scrub, not a text selection — without this
      the axis labels highlight as the pointer sweeps over them. */
@@ -451,6 +451,11 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   stroke-linejoin: round;
 }
 .legend-item.is-zero { opacity: 0.45; }
+/* The contribution rate, kept beside the balance rather than replaced by it —
+   one says where the account is, the other says why it is moving. */
+/* A derived figure, shown for reference rather than typed into. */
+.assumption-grid input[readonly] { color: var(--ink-soft); background: var(--paper); cursor: default; }
+.legend-sub { font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); opacity: 0.7; }
 
 /* An event description is a control, not a label: it reads the charts at that
    date. Styled as text so the table still scans as a table. */

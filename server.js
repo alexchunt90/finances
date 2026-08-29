@@ -70,6 +70,7 @@ const CONFIG_PATH = path.join(STATE_DIR, 'config.json');
 const DATA_DIR = path.join(STATE_DIR, 'data');
 const PERIODS_PATH = path.join(DATA_DIR, 'periods.json');
 const HISTORY_PATH = path.join(DATA_DIR, 'history.json');
+const AMORTIZATION_PATH = path.join(DATA_DIR, 'amortization.json');
 
 const PORT = Number(process.env.PORT || 4174);
 
@@ -115,6 +116,9 @@ const readConfig = () => readJson(CONFIG_PATH);
 const readPeriods = () => readJson(PERIODS_PATH, []);
 // Balance snapshots predating the app. Read-only; edited by hand or by import.
 const readHistory = () => readJson(HISTORY_PATH, { snapshots: [], events: [] });
+// The servicer's amortization schedule, converted from their PDF once. Read
+// only — the schedule is a fact about the loan, not state the app edits.
+const readAmortization = () => readJson(AMORTIZATION_PATH, { payments: [] });
 
 // ---------------------------------------------------------------------------
 // Outside parameter sources, carried over from refi_calc.
@@ -366,12 +370,14 @@ const server = http.createServer(async (req, res) => {
   try {
     // Everything the browser needs to render, in one round trip.
     if (pathname === '/api/state' && (req.method === 'GET' || req.method === 'HEAD')) {
-      const [config, periods, history] = await Promise.all([readConfig(), readPeriods(), readHistory()]);
+      const [config, periods, history, amortization] = await Promise.all([
+        readConfig(), readPeriods(), readHistory(), readAmortization(),
+      ]);
       // Live lookups are opt-in so the ordinary page load never waits on a
       // network call; the Mortgage tab's refresh button asks for them.
       const live = url.searchParams.get('live') === '1';
       const { meta, problems } = await resolveSources(config, live);
-      return json(res, 200, { config, periods, history, meta, problems });
+      return json(res, 200, { config, periods, history, amortization, meta, problems });
     }
 
     // Everything an iPhone widget needs to draw the burndown, in one small

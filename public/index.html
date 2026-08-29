@@ -168,8 +168,8 @@
       </table>
     </div>
     <div class="close-extra">
-      <label for="close-mortgage">Mortgage principal <span class="optional">optional</span></label>
-      <input type="number" id="close-mortgage" step="0.01" />
+      <label for="close-mortgage">Extra principal paid <span class="optional">optional</span></label>
+      <input type="number" id="close-mortgage" step="0.01" min="0" placeholder="0.00" />
     </div>
 
     <h3 class="eyebrow" style="margin-top:20px">Flows this period not already in the waterfall</h3>
@@ -403,6 +403,19 @@
     </div>
   </section>
 
+  <section class="block" id="savings-trajectory-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Savings trajectory</h2>
+      <p class="block-note" id="savings-traj-note"></p>
+    </div>
+    <div class="chart-shell"><svg id="chart-savings-traj" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="scrub-row">
+      <span class="scrub-hint" id="traj-scrub-hint"></span>
+      <button type="button" class="jump-button" id="traj-scrub-reset" hidden>Back to the end</button>
+    </div>
+    <div class="legend" id="savings-traj-legend"></div>
+  </section>
+
   <section class="block" id="emergency-block" hidden>
     <div class="block-head">
       <h2 class="eyebrow">Emergency fund — recovery</h2>
@@ -410,6 +423,7 @@
     </div>
     <div class="chart-shell"><svg id="chart-emergency" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
   </section>
+
   <section class="block">
     <div class="block-head">
       <h2 class="eyebrow">Buffer trajectory</h2>
@@ -417,13 +431,36 @@
     </div>
     <div class="chart-shell"><svg id="chart-buffer" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
   </section>
-  <section class="block" id="savings-trajectory-block">
+
+  <section class="block" id="mortgage-projection-block">
     <div class="block-head">
-      <h2 class="eyebrow">Savings trajectory</h2>
-      <p class="block-note" id="savings-traj-note"></p>
+      <h2 class="eyebrow">Mortgage principal</h2>
+      <p class="block-note" id="mortgage-proj-note"></p>
     </div>
-    <div class="chart-shell"><svg id="chart-savings-traj" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg></div>
-    <div class="legend" id="savings-traj-legend"></div>
+    <div class="chart-shell"><svg id="chart-mortgage-proj" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
+  </section>
+
+  <section class="block" id="projection-assumptions">
+    <div class="block-head">
+      <h2 class="eyebrow">Assumptions</h2>
+      <p class="block-note">What the projections above run on. Edits save to config.json.</p>
+    </div>
+    <div class="assumption-grid">
+      <fieldset>
+        <legend>Horizon</legend>
+        <label>Pay periods to project<input type="number" id="in-proj-periods" step="1" min="1" max="120" /></label>
+      </fieldset>
+      <fieldset>
+        <legend>Market return</legend>
+        <label>Annual return %<input type="number" id="in-proj-return" step="0.25" /></label>
+        <p class="block-note" id="proj-return-note"></p>
+      </fieldset>
+      <fieldset>
+        <legend>Pre-tax</legend>
+        <label>401(k) per period<input type="number" id="in-proj-401k" step="10" /></label>
+        <p class="block-note">Withheld before the deposit, so it never enters the waterfall — but it still lands in the account.</p>
+      </fieldset>
+    </div>
   </section>
 
 </main>
@@ -520,7 +557,8 @@
     <div class="assumption-grid">
       <fieldset>
         <legend>Loan you have</legend>
-        <label>Balance today<input type="number" id="in-cur-balance" step="500" /></label>
+        <label>Balance today<input type="number" id="in-cur-balance" step="500" readonly /></label>
+        <p class="block-note" id="mortgage-balance-note"></p>
         <label>Rate %<input type="number" id="in-cur-rate" step="0.005" /></label>
         <label>Months left<input type="number" id="in-cur-months" step="1" /></label>
         <label>Actual P&amp;I payment<input type="number" id="in-cur-payment" step="1" placeholder="calculated" /></label>

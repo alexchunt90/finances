@@ -130,6 +130,39 @@ const Model = (() => {
     };
   }
 
+  /**
+   * Assumptions the Projections tab runs on. Defaulted here rather than
+   * required in config, so a config written before this existed still projects
+   * sensibly; the panel writes them on first edit.
+   */
+  function projection(cfg) {
+    const p = cfg.projections || {};
+    return {
+      periods: Number.isFinite(p.periods) && p.periods > 0 ? Math.round(p.periods) : 24,
+      annualReturnPct: Number.isFinite(p.annualReturnPct) ? p.annualReturnPct : 7,
+    };
+  }
+
+  /**
+   * What lands in the 401k each period. Withheld pre-tax, so it never appears
+   * in the waterfall — but it still arrives in the account, and it is large
+   * enough that leaving it out understates where the plan lands.
+   *
+   * Stored per period; the older monthly key still reads for a config written
+   * before the Projections panel existed.
+   */
+  function k401PerPeriod(cfg) {
+    const pre = cfg.income?.preTax || {};
+    if (pre.retirement401kPerPeriod != null) return round2(pre.retirement401kPerPeriod);
+    return round2((pre.retirement401kMonthly || 0) / 2);
+  }
+
+  /** A yearly return as a per-period rate — 24 deposits a year. */
+  function periodReturn(annualPct) {
+    const a = Number(annualPct) || 0;
+    return a ? Math.pow(1 + a / 100, 1 / 24) - 1 : 0;
+  }
+
   // --- the open period ------------------------------------------------------
 
   /**
@@ -407,8 +440,8 @@ const Model = (() => {
     add('buffer', -(period.totals ? period.totals.surpriseFromBuffer || 0 : 0));
     // The 401k is funded pre-tax and never touches the waterfall, but it still
     // lands in the account, so reconciliation has to expect it.
-    const k401 = cfg.income.preTax?.retirement401kMonthly || 0;
-    if (k401) add('k401', round2(k401 / 2));
+    const k401 = k401PerPeriod(cfg);
+    if (k401) add('k401', k401);
     return map;
   }
 
@@ -474,7 +507,7 @@ const Model = (() => {
     const net = round2(inflow - draw.value);
     const points = [];
     let bal = balances.buffer ?? 0;
-    for (let i = 0; i <= cfg.rules.trajectoryPeriods; i++) {
+    for (let i = 0; i <= projection(cfg).periods; i++) {
       points.push({ period: i, balance: round2(bal) });
       bal += net;
     }
@@ -495,7 +528,7 @@ const Model = (() => {
     const inflow = waterfallResult.tiers.find((t) => t.key === 'emergency').amount;
     const points = [];
     let b = bal;
-    for (let i = 0; i <= cfg.rules.trajectoryPeriods; i++) {
+    for (let i = 0; i <= projection(cfg).periods; i++) {
       points.push({ period: i, balance: round2(Math.min(b, target)) });
       b += inflow;
     }
@@ -516,7 +549,7 @@ const Model = (() => {
    * average of one-off spending.
    */
   function savingsTrajectory(cfg, balances, closedPeriods, wf, todayISO) {
-    const n = cfg.rules.trajectoryPeriods;
+    const n = projection(cfg).periods;
     const horizon = PayDates.iso(PayDates.parse(todayISO) + (n + 2) * 20 * PayDates.DAY);
     const deposits = PayDates.depositsBetween(todayISO, horizon).slice(0, n + 1);
     if (!deposits.length) return null;
@@ -527,7 +560,22 @@ const Model = (() => {
         if (d.accountId) perPeriod[d.accountId] = round2((perPeriod[d.accountId] || 0) + d.amount);
       }
     }
-    const destinations = Object.keys(perPeriod);
+    const k401 = k401PerPeriod(cfg);
+    if (k401) perPeriod.k401 = round2((perPeriod.k401 || 0) + k401);
+
+    // Every account that holds something or receives something, not just the
+    // waterfall's destinations. The 401k and vested equity dominate the total
+    // and never appear in the waterfall, so leaving them out answered a much
+    // smaller question than the chart appears to ask.
+    const destinations = cfg.accounts
+      .filter((a) => !(a.retired && !(balances[a.id] > 0)))
+      .map((a) => a.id)
+      .filter((id) => (balances[id] ?? 0) > 0 || (perPeriod[id] || 0) > 0);
+
+    // Volatile accounts compound; cash savings do not, in any way worth
+    // modelling over two years.
+    const rate = periodReturn(projection(cfg).annualReturnPct);
+    const grows = new Set(cfg.accounts.filter((a) => a.volatile).map((a) => a.id));
 
     const draw = averageDraw(cfg, closedPeriods);
     const running = {};
@@ -550,9 +598,21 @@ const Model = (() => {
     const points = [{ date: todayISO, balances: { ...running } }];
     const paid = [];
     let from = todayISO;
+    let growth = 0;
     for (const dep of deposits.slice(0, n)) {
       const to = dep.available;
-      for (const id of destinations) running[id] = round2(running[id] + perPeriod[id]);
+      for (const id of destinations) running[id] = round2(running[id] + (perPeriod[id] || 0));
+      // Return applies after the contribution, so a period's own deposit earns
+      // that period — close enough at this cadence, and it never compounds a
+      // balance that was not there yet.
+      if (rate) {
+        for (const id of destinations) {
+          if (!grows.has(id)) continue;
+          const gain = round2(running[id] * rate);
+          growth = round2(growth + gain);
+          running[id] = round2(running[id] + gain);
+        }
+      }
       if (running.buffer != null) running.buffer = round2(running.buffer - draw.value);
       for (const d of dues) {
         if (d.dueISO >= from && d.dueISO < to && running.sinking != null) {
@@ -570,7 +630,76 @@ const Model = (() => {
       periods: points.length - 1,
       start: total(points[0]),
       end: total(points[points.length - 1]),
-      contributedPerPeriod: round2(sum(destinations, (id) => perPeriod[id])),
+      contributedPerPeriod: round2(sum(destinations, (id) => perPeriod[id] || 0)),
+      // Split out so the note can say how much of the climb is contribution
+      // and how much is assumed market return.
+      growth: round2(growth),
+      annualReturnPct: projection(cfg).annualReturnPct,
+      k401PerPeriod: k401,
+    };
+  }
+
+  // --- mortgage -------------------------------------------------------------
+
+  /**
+   * Where the loan stands, read off the servicer's schedule rather than
+   * recomputed. The schedule is the lender's arithmetic, including how they
+   * round; re-deriving it from a rate would drift from the statement.
+   *
+   * Extra principal is subtracted on top. That is an approximation — paying
+   * early also saves the interest that principal would have accrued, so the
+   * real balance runs slightly below this — but it never overstates how much
+   * has been paid off.
+   */
+  function mortgageStanding(amortization, extraPrincipal, todayISO) {
+    const payments = (amortization && amortization.payments) || [];
+    if (!payments.length) return null;
+    const extra = round2(extraPrincipal || 0);
+
+    // The last payment whose due date has passed.
+    let paid = null;
+    for (const p of payments) {
+      if (p.date <= todayISO) paid = p; else break;
+    }
+    const scheduled = paid ? paid.end : round2(amortization.opening ?? payments[0].end + payments[0].principal);
+    const next = payments.find((p) => p.date > todayISO) || null;
+
+    return {
+      scheduled,
+      extra,
+      balance: round2(Math.max(0, scheduled - extra)),
+      paidThrough: paid ? paid.date : null,
+      paymentsMade: paid ? paid.n : 0,
+      paymentsLeft: payments.length - (paid ? paid.n : 0),
+      next,
+      opening: round2(amortization.opening ?? 0),
+    };
+  }
+
+  /**
+   * Scheduled remaining principal over the projection horizon. Monthly, because
+   * the loan is: interpolating it onto pay periods would invent balances that
+   * never exist on a statement.
+   */
+  function mortgageTrajectory(cfg, amortization, extraPrincipal, todayISO) {
+    const standing = mortgageStanding(amortization, extraPrincipal, todayISO);
+    if (!standing) return null;
+    // 24 pay periods is a year; the horizon is stated in periods everywhere
+    // else on the tab, so convert rather than introduce a second unit.
+    const months = Math.max(1, Math.round(projection(cfg).periods / 2));
+    const upcoming = (amortization.payments || []).filter((p) => p.date > todayISO).slice(0, months);
+
+    const points = [{ period: 0, date: todayISO, balance: standing.balance }];
+    for (const p of upcoming) {
+      points.push({ period: p.n - standing.paymentsMade, date: p.date, balance: round2(Math.max(0, p.end - standing.extra)) });
+    }
+    const principalPaid = round2(sum(upcoming, (p) => p.principal));
+    return {
+      points, months: upcoming.length, standing,
+      interestPaid: round2(sum(upcoming, (p) => p.interest)),
+      principalPaid,
+      start: points[0].balance,
+      end: points[points.length - 1].balance,
     };
   }
 
@@ -643,6 +772,8 @@ const Model = (() => {
   return {
     round2, sum, prorate, DAYS_PER_MONTH, bucketDrift,
     committedTotal, sinkingTotal, scheduledTransfer, targetsFor, targetsTotal, necessaryFloor, burndown,
+    projection, k401PerPeriod, periodReturn,
+    mortgageStanding, mortgageTrajectory,
     waterfall, periodDays, pace, surpriseTotal, settle, sweepPlan,
     reconcile, plannedFlows, contributed, windfalls,
     averageDraw, bufferTrajectory, emergencyTrajectory, savingsTrajectory, sinkingCoverage, assetSummary,

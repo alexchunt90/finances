@@ -16,7 +16,7 @@ const sorts = { committed: { col: 'perPeriod', key: 'perPeriod', dir: 'desc' } }
 // `scrub` is the snapshot date the asset charts are being read at, or null for
 // the latest. It is view state, not saved: it belongs to the session, not the
 // file.
-const state = { config: null, periods: [], history: { snapshots: [], events: [] }, view: 'budget', scrub: null };
+const state = { config: null, periods: [], history: { snapshots: [], events: [] }, amortization: { payments: [] }, view: 'budget', scrub: null, projScrub: null };
 
 // --- formatting -------------------------------------------------------------
 
@@ -275,6 +275,34 @@ function openPeriod() {
 }
 
 const closedPeriods = () => state.periods.filter((p) => p.status === 'closed').sort((a, b) => a.start.localeCompare(b.start));
+
+/** Every extra principal payment logged, across every period. */
+const extraPrincipalTotal = () =>
+  Model.round2(state.periods.reduce((t, p) => t + (Number(p.extraPrincipal) || 0), 0));
+
+/** Where the loan stands today: the schedule, less everything paid early. */
+const mortgageStanding = () =>
+  Model.mortgageStanding(state.amortization, extraPrincipalTotal(), today());
+
+/**
+ * The loan balance is read off the servicer's schedule rather than typed, so it
+ * advances on its own each time a payment date passes. Written back to config
+ * because the whole Mortgage tab reads it from there — but only when it has
+ * actually moved, so an ordinary page load saves nothing.
+ */
+function syncMortgageBalance() {
+  const standing = mortgageStanding();
+  if (!standing || !state.config.mortgage) return;
+  const loan = state.config.mortgage.currentLoan;
+  if (Math.abs((loan.balance ?? 0) - standing.balance) < 0.005) return;
+  loan.balance = standing.balance;
+  // Months left comes off the same schedule, or the payment figures drift from
+  // the balance they are supposed to describe.
+  if (standing.paymentsLeft > 0) loan.monthsRemaining = standing.paymentsLeft;
+  Mortgage.setConfig(state.config.mortgage, state.meta);
+  Mortgage.setBalance(standing.balance);
+  queueSave('config');
+}
 const lastClosed = () => closedPeriods().slice(-1)[0] || null;
 
 /** Last closed snapshot, falling back to the opening balances in config. */
@@ -393,7 +421,7 @@ function emptyChart(svg, label) {
 }
 
 /** Projection line with an optional dashed target and a zero rule. */
-function lineChart(svg, points, { target = null, xLabel = 'periods ahead' } = {}) {
+function lineChart(svg, points, { target = null, xLabel = 'periods ahead', zeroBase = true } = {}) {
   svg.replaceChildren();
   if (!points.length) return emptyChart(svg, 'no data');
 
@@ -404,8 +432,15 @@ function lineChart(svg, points, { target = null, xLabel = 'periods ahead' } = {}
   // The bottom carries two rows — the ticks and the caption — so it needs more
   // room than the charts that only carry one.
   const pad = { l: 14 + 48 * k, r: 16, t: 14 * k, b: 20 + 20 * k };
-  const values = points.map((p) => p.balance).concat(target != null ? [target, 0] : [0]);
-  const lo = Math.min(...values), hi = Math.max(...values);
+  // Zero belongs on the axis when the question is "does this run out". It does
+  // not when the question is "how fast is this falling": a mortgage that moves
+  // 3% of its balance in a year is a flat line against a zero-based axis.
+  const values = points.map((p) => p.balance).concat(target != null ? [target] : []).concat(zeroBase ? [0] : []);
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (!zeroBase) {
+    const pad = (hi - lo) * 0.12 || Math.abs(hi) * 0.01 || 1;
+    lo -= pad; hi += pad;
+  }
   const span = hi - lo || 1;
   const x = (i) => pad.l + (i / Math.max(1, points.length - 1)) * (W - pad.l - pad.r);
   const y = (v) => pad.t + (1 - (v - lo) / span) * (H - pad.t - pad.b);
@@ -1010,18 +1045,20 @@ function renderClose(period, prevBalances) {
 }
 
 /**
- * The mortgage balance is a liability, not one of the accounts, so it sits
- * outside the balances table and never counts toward the "N of M entered" gate.
- * Entering it updates the loan on the Mortgage tab straight away — that figure
- * is a live setting rather than a period snapshot — and is also recorded on the
- * period so the close has a note of what it was.
+ * Extra principal paid this period — money sent at the loan beyond the
+ * scheduled payment. The scheduled part needs no entry: the amortization
+ * schedule already knows it, and the balance advances on its own as due dates
+ * pass. Only the part that is not on the schedule has to be recorded.
+ *
+ * A liability rather than an account, so it sits outside the balances table and
+ * never counts toward the "N of M entered" gate.
  */
 function renderMortgageField(period) {
   const input = $('close-mortgage');
   if (!state.config.mortgage) return;
 
   if (document.activeElement !== input) {
-    input.value = period.mortgageBalance != null ? period.mortgageBalance : '';
+    input.value = period.extraPrincipal != null ? period.extraPrincipal : '';
   }
 
   if (input.dataset.wired) return;
@@ -1029,18 +1066,16 @@ function renderMortgageField(period) {
   input.addEventListener('input', () => {
     const open = openPeriod();
     if (input.value === '') {
-      delete open.mortgageBalance;
-      queueSave(open.id);
-      return;
+      delete open.extraPrincipal;
+    } else {
+      const value = Number(input.value);
+      if (!Number.isFinite(value) || value < 0) return;
+      open.extraPrincipal = value;
     }
-    const value = Number(input.value);
-    if (!Number.isFinite(value) || value < 0) return;
-    open.mortgageBalance = value;
-    state.config.mortgage.currentLoan.balance = value;
-    Mortgage.setBalance(value);
     queueSave(open.id);
-    queueSave('config');
-    // No re-render here: rebuilding the form would drop focus mid-typing.
+    // The balance is derived, so it follows the entry rather than being set by
+    // it. No re-render here: rebuilding the form would drop focus mid-typing.
+    syncMortgageBalance();
   });
 }
 
@@ -1074,7 +1109,10 @@ async function closePeriod() {
         .reduce((a, t) => a + t.amount, 0) + Model.contributed(period)
     ),
     windfalls: Model.windfalls(period),
-    mortgageBalance: period.mortgageBalance ?? state.config.mortgage?.currentLoan?.balance ?? null,
+    // Snapshot what the loan stood at when the period closed, and what was
+    // paid at it beyond the schedule.
+    mortgageBalance: state.config.mortgage?.currentLoan?.balance ?? null,
+    extraPrincipal: Model.round2(period.extraPrincipal || 0),
   };
 
   const closeRes = await request(`api/periods/${period.id}`, 'PUT', period);
@@ -1430,9 +1468,12 @@ function timeChart(svg, series, events = [], scrubDate = null) {
  * part you could actually reach — its thickness is the answer to a different
  * question than the total height.
  */
-function stackChart(svg, snapshots, series, events = [], scrubDate = null) {
+function stackChart(svg, snapshots, series, events = [], scrubDate = null, { totalLabel = false } = {}) {
   svg.replaceChildren();
   svg.__axis = null;
+  // The dates actually plotted, so a pointer can snap to one without the
+  // handler needing to know where the series came from.
+  svg.__dates = snapshots.map((sn) => sn.date);
   if (!snapshots.length || !series.length) return emptyChart(svg, 'no history');
 
   const W = 760, H = 340;
@@ -1465,11 +1506,30 @@ function stackChart(svg, snapshots, series, events = [], scrubDate = null) {
     svg.append(svgEl('line', { x1: ex, y1: pad.t, x2: ex, y2: H - pad.b, class: 'event-rule' }));
   }
 
-  // No value labels on the bands — eleven of them would bury the chart. The
-  // rule marks the instant and the legend carries the figures.
-  if (scrubDate && snapshots.some((sn) => sn.date === scrubDate)) {
+  // No per-band labels — eleven of them would bury the chart. The rule marks
+  // the instant and the legend carries the figures. `totalLabel` adds the one
+  // number the stack as a whole is answering, for charts where that is the
+  // point rather than the mix.
+  const atScrub = scrubDate && snapshots.find((sn) => sn.date === scrubDate);
+  if (atScrub) {
     const sx = x(scrubDate);
     svg.append(svgEl('line', { x1: sx, y1: pad.t, x2: sx, y2: H - pad.b, class: 'chart-scrub-line' }));
+    if (totalLabel) {
+      const total = series.reduce((a, sr) => a + (atScrub.balances[sr.id] || 0), 0);
+      const sy = y(total);
+      svg.append(svgEl('circle', { cx: sx, cy: sy, r: 4 + k, class: 'chart-scrub-dot' }));
+      // Flip inside near the right edge, which is where the chart opens.
+      const nearRight = sx > pad.l + (W - pad.l - pad.r) * 0.62;
+      const anchor = nearRight ? 'end' : 'start';
+      const dx = (nearRight ? -10 : 10) * k;
+      const top = Math.min(Math.max(sy - 12 * k, pad.t + 12 * k), H - pad.b - 18 * k);
+      const v = svgEl('text', { x: sx + dx, y: top, 'text-anchor': anchor, class: 'chart-scrub-label' });
+      v.textContent = fmt.usd0(total);
+      svg.append(v);
+      const d = svgEl('text', { x: sx + dx, y: top + 15 * k, 'text-anchor': anchor, class: 'chart-scrub-date' });
+      d.textContent = atScrub.date;
+      svg.append(d);
+    }
   }
 
   svg.append(svgEl('line', { x1: pad.l, y1: H - pad.b, x2: W - pad.r, y2: H - pad.b, class: 'axis-line' }));
@@ -1859,14 +1919,28 @@ function renderProjections() {
   // savings trajectory — where the plan lands, contributions only
   const traj = Model.savingsTrajectory(cfg, balances, closedPeriods(), wf, today());
   if (traj) {
+    // Same reading as the composition chart on Assets: illiquid on the bottom
+    // in cool shades, liquid above in warm, so the warm band is still the part
+    // you could actually reach.
+    const cool = cfg.theme?.coolPalette || ['#1F3D5C', '#2F6285', '#4A93A6'];
     const warm = cfg.theme?.warmPalette || ['#6E3410', '#AC601A', '#C67C1F', '#D4AF37', '#E4C86A', '#F1E0A8'];
-    const trajSeries = traj.destinations
-      .filter((id) => traj.perPeriod[id] > 0 || (balances[id] ?? 0) > 0)
-      .map((id, i) => {
-        const a = cfg.accounts.find((x) => x.id === id);
-        return { id, name: a ? a.name : id, color: warm[i % warm.length] };
-      });
-    stackChart($('chart-savings-traj'), traj.points, trajSeries);
+    const tracked = traj.destinations.map((id) => cfg.accounts.find((x) => x.id === id) || { id, name: id, liquid: true });
+    const illiquid = tracked.filter((a) => !a.liquid);
+    const liquid = tracked.filter((a) => a.liquid);
+    const trajSeries = illiquid.map((a, i) => ({ id: a.id, name: a.name, color: cool[i % cool.length] }))
+      .concat(liquid.map((a, i) => ({ id: a.id, name: a.name, color: warm[i % warm.length] })));
+    // Default to the far end: the question the chart answers is where the plan
+    // lands, so it opens on the answer and scrubs back toward today.
+    const last = traj.points[traj.points.length - 1].date;
+    const scrub = traj.points.some((pt) => pt.date === state.projScrub) ? state.projScrub : null;
+    const shown = scrub || last;
+    const at = traj.points.find((pt) => pt.date === shown);
+    stackChart($('chart-savings-traj'), traj.points, trajSeries, [], shown, { totalLabel: true });
+
+    $('traj-scrub-reset').hidden = !scrub;
+    $('traj-scrub-hint').textContent = scrub
+      ? `Reading ${shown}. Drag the chart to move, or double-click to return to the end.`
+      : `Reading the end of the projection, ${shown}. Drag the chart to read an earlier date.`;
 
     const months = Model.round2(PayDates.daysBetween(traj.points[0].date, traj.points[traj.points.length - 1].date) / 30.44);
     const bills = traj.billsPaid.length
@@ -1875,29 +1949,94 @@ function renderProjections() {
     const bleed = traj.draw.value > 0
       ? ` The buffer bleeds ${fmt.usd(traj.draw.value)} a period against one-off spending (${traj.draw.source}).`
       : '';
+    const added = Model.round2(traj.end - traj.start);
+    const contributed = Model.round2(added - traj.growth);
+    const k401Line = traj.k401PerPeriod
+      ? ` ${fmt.usd(traj.k401PerPeriod)} of that is the pre-tax 401(k), which never passes through the waterfall.`
+      : '';
+    const growthLine = traj.growth
+      ? ` ${fmt.usd0(contributed)} of the climb is contribution and ${fmt.usd0(traj.growth)} is assumed return at ` +
+        `${traj.annualReturnPct}% a year on the volatile accounts.`
+      : ` Contributions only: no market return is assumed.`;
     $('savings-traj-note').textContent =
-      `${fmt.usd(traj.contributedPerPeriod)} a period across ${trajSeries.length} destinations takes savings from ` +
+      `${fmt.usd(traj.contributedPerPeriod)} a period across ${trajSeries.length} accounts takes the total from ` +
       `${fmt.usd0(traj.start)} to ${fmt.usd0(traj.end)} over ${traj.periods} periods — about ${months} months, ` +
-      `adding ${fmt.usd(Model.round2(traj.end - traj.start))}. Contributions only: no market movement is assumed, ` +
-      `which matters most for the brokerage.${bills}${bleed}`;
+      `adding ${fmt.usd0(added)}.${k401Line}${growthLine}${bills}${bleed}`;
 
     const tlegend = $('savings-traj-legend');
     tlegend.replaceChildren();
     for (const sr of trajSeries) {
-      const item = el('div', 'legend-item');
+      const balance = at ? at.balances[sr.id] || 0 : 0;
+      const per = traj.perPeriod[sr.id] || 0;
+      const item = el('div', `legend-item${balance > 0.005 ? '' : ' is-zero'}`);
       const sw = el('span', 'legend-swatch');
       sw.style.background = sr.color;
       item.append(sw, document.createTextNode(sr.name),
-        el('span', 'legend-value', `${fmt.usd(traj.perPeriod[sr.id])}/period`));
+        el('span', 'legend-value', fmt.usd0(balance)));
+      // The rate stays beside the balance: one says where the account is, the
+      // other says why it is moving.
+      if (per) item.append(el('span', 'legend-sub', `+${fmt.usd(per)}/period`));
       tlegend.append(item);
     }
   }
 
-  const traj2 = Model.savingsTrajectory(cfg, balances, closedPeriods(), wf, today());
-  $('projections-note').textContent = traj2
-    ? `Projected from today's balances and the current plan, over ${traj2.periods} pay periods. ` +
-      `Contributions only — no market growth is assumed.`
+  const proj = Model.projection(cfg);
+  $('projections-note').textContent = traj
+    ? `Projected from today's balances and the current plan, over ${traj.periods} pay periods — ` +
+      `about ${Math.round(traj.periods / 24 * 12)} months. Volatile accounts compound at ` +
+      `${proj.annualReturnPct}% a year; everything else is contributions only.`
     : 'Not enough of a pay calendar ahead to project.';
+
+  renderMortgageProjection();
+  renderProjectionAssumptions();
+}
+
+/** Scheduled remaining principal over the same horizon as the charts above. */
+function renderMortgageProjection() {
+  const block = $('mortgage-projection-block');
+  const mt = Model.mortgageTrajectory(state.config, state.amortization, extraPrincipalTotal(), today());
+  block.hidden = !mt;
+  if (!mt) return;
+
+  lineChart($('chart-mortgage-proj'), mt.points, { xLabel: 'months ahead', zeroBase: false });
+
+  const st = mt.standing;
+  const extra = st.extra > 0
+    ? ` ${fmt.usd(st.extra)} of extra principal is already off the balance.`
+    : '';
+  const nextPmt = st.next
+    ? ` Next payment ${fmt.day(st.next.date)}: ${fmt.usd(st.next.principal)} principal, ${fmt.usd(st.next.interest)} interest.`
+    : '';
+  $('mortgage-proj-note').textContent =
+    `Scheduled principal falls from ${fmt.usd0(mt.start)} to ${fmt.usd0(mt.end)} over the next ${mt.months} ` +
+    `payments — ${fmt.usd0(mt.principalPaid)} off the balance, ${fmt.usd0(mt.interestPaid)} to interest. ` +
+    (st.paymentsMade
+      ? `${st.paymentsLeft} of ${st.paymentsMade + st.paymentsLeft} payments remain.`
+      : `All ${st.paymentsLeft} payments still to come — none has fallen due yet.`) +
+    `${extra}${nextPmt}`;
+}
+
+/**
+ * The assumptions panel. Written straight onto config so the projections above
+ * move as the figures are typed, the way the mortgage tab's panel behaves.
+ */
+function renderProjectionAssumptions() {
+  const cfg = state.config;
+  const proj = Model.projection(cfg);
+  setIfIdle('in-proj-periods', proj.periods);
+  setIfIdle('in-proj-return', proj.annualReturnPct);
+  setIfIdle('in-proj-401k', Model.k401PerPeriod(cfg));
+  const perPeriod = Model.periodReturn(proj.annualReturnPct);
+  $('proj-return-note').textContent = proj.annualReturnPct
+    ? `${(perPeriod * 100).toFixed(3)}% a period, compounded over 24 deposits a year. Applied to the volatile accounts only.`
+    : 'No return assumed — the chart shows contributions alone.';
+}
+
+/** Fill an input unless it is the one being typed in, which would fight the cursor. */
+function setIfIdle(id, value) {
+  const input = $(id);
+  if (document.activeElement === input) return;
+  input.value = value;
 }
 
 // --- wiring -----------------------------------------------------------------
@@ -1926,6 +2065,18 @@ function render() {
   if (state.view === 'assets') renderAssets();
   if (state.view === 'projections') renderProjections();
   if (state.view === 'mortgage') {
+    const st = mortgageStanding();
+    const note = $('mortgage-balance-note');
+    if (note) {
+      note.textContent = !st
+        ? 'No amortization schedule loaded, so this is whatever config says.'
+        : st.paidThrough
+          ? `Read from the amortization schedule, through the ${fmt.day(st.paidThrough)} payment` +
+            (st.extra > 0 ? `, less ${fmt.usd(st.extra)} of extra principal` : '') +
+            `. It advances on its own as payment dates pass; log extra principal on the close form.`
+          : `The opening balance — no scheduled payment has come due yet` +
+            (st.extra > 0 ? `, less ${fmt.usd(st.extra)} of extra principal` : '') + '.';
+    }
     Mortgage.render();
     // Fire-and-forget on first open; the flags above keep it to one attempt.
     if (!liveSources.tried && !liveSources.inFlight) refreshMortgageSources({ auto: true });
@@ -2048,6 +2199,71 @@ function wire() {
     renderAssetHistory();
   });
 
+  // The savings trajectory scrubs the same way, over projected dates rather
+  // than recorded ones. It reads the dates off the chart itself, so it always
+  // snaps to a point that was actually plotted.
+  {
+    const chart = $('chart-savings-traj');
+    const setFromPointer = (ev) => {
+      const axis = chart.__axis;
+      const dates = chart.__dates || [];
+      if (!axis || !dates.length) return;
+      const box = chart.getBoundingClientRect();
+      if (!box.width) return;
+      const units = ((ev.clientX - box.left) / box.width) * axis.W;
+      const frac = (units - axis.x0) / (axis.x1 - axis.x0 || 1);
+      const t = axis.t0 + frac * (axis.t1 - axis.t0);
+      let best = null, bestGap = Infinity;
+      for (const d of dates) {
+        const gap = Math.abs(PayDates.parse(d) - t);
+        if (gap < bestGap) { bestGap = gap; best = d; }
+      }
+      if (!best || state.projScrub === best) return;
+      state.projScrub = best;
+      renderProjections();
+    };
+    chart.addEventListener('pointerdown', (ev) => {
+      setFromPointer(ev);
+      try { chart.setPointerCapture(ev.pointerId); } catch { /* drag ends at the edge */ }
+    });
+    chart.addEventListener('pointermove', (ev) => {
+      if (chart.hasPointerCapture(ev.pointerId)) setFromPointer(ev);
+    });
+    chart.addEventListener('dblclick', () => {
+      state.projScrub = null;
+      renderProjections();
+    });
+  }
+
+  $('traj-scrub-reset').addEventListener('click', () => {
+    state.projScrub = null;
+    renderProjections();
+  });
+
+  // Projection assumptions. Written onto config as typed, so the charts above
+  // move with the figure rather than after a save round-trip.
+  const projField = (id, apply) => {
+    $(id).addEventListener('input', (ev) => {
+      const value = Number(ev.target.value);
+      if (ev.target.value === '' || !Number.isFinite(value)) return;
+      apply(value);
+      queueSave('config');
+      renderProjections();
+    });
+  };
+  projField('in-proj-periods', (v) => {
+    // A horizon of zero has nothing to draw, and past a few years the pay
+    // calendar stops being a useful thing to extrapolate.
+    state.config.projections = { ...(state.config.projections || {}), periods: Math.min(120, Math.max(1, Math.round(v))) };
+  });
+  projField('in-proj-return', (v) => {
+    state.config.projections = { ...(state.config.projections || {}), annualReturnPct: v };
+  });
+  projField('in-proj-401k', (v) => {
+    const income = state.config.income || (state.config.income = {});
+    income.preTax = { ...(income.preTax || {}), retirement401kPerPeriod: Math.max(0, v) };
+  });
+
   // Chart label sizing is computed from the rendered width, so a window resize
   // has to redraw whichever chart-bearing view is on screen. Switching tabs is
   // already covered — the view renders on the way in. The mortgage tab wires
@@ -2080,6 +2296,10 @@ async function boot() {
     Mortgage.setConfig(state.config.mortgage, state.meta);
     state.periods = payload.periods || [];
     state.history = payload.history || { snapshots: [], events: [] };
+    state.amortization = payload.amortization || { payments: [] };
+    // The schedule may have advanced past a due date since this was last
+    // opened, so bring the loan balance up to date before anything renders it.
+    syncMortgageBalance();
     wire();
     // Normalise the URL on load so it always states the view, then render it.
     setView(viewFromUrl(), { push: false });

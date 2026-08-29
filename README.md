@@ -205,6 +205,50 @@ page itself loads — which looks exactly like an ad blocker and is not. Turn of
 Settings → Privacy → Security → **Use secure DNS** on any machine that reaches
 the app by its `.ts.net` name.
 
+## iPhone widget
+
+`scriptable/burndown-widget.js` draws the burndown on the home screen, in the
+same colours as the page, and opens the budget view in Chrome when tapped. It
+runs in [Scriptable](https://scriptable.app).
+
+The phone does no arithmetic. `GET api/widget/burndown` runs the same
+`model.js` the page runs and returns the finished chart as figures, so the
+widget cannot drift from the chart it mirrors:
+
+```bash
+curl -s 'http://127.0.0.1:4174/api/widget/burndown?today=2026-08-29'
+```
+
+`series` is the stacking order, bottom-up, ending in the unplanned cushion, and
+each point's `v` lines up with it index for index. Bands arrive clamped at
+empty, exactly as the page clamps them — an overspent category has already
+handed its overspend to the cushion, so drawing it negative would count the same
+money twice. What the cushion is overdrawn by rides in `o`, to be drawn below
+the axis.
+
+`today` is the **phone's** local date. The server is very likely on UTC, and a
+UTC reading dates evening spending a day forward, which would step the widget's
+notion of today a day ahead of the browser's. A missing or malformed value falls
+back to the server's own date rather than returning an error to a home-screen
+widget.
+
+The endpoint is read-only and no more protected than the rest of the app —
+everything in it is already readable at `/api/state`, and the whole thing is
+reachable only from the tailnet. Its one write-adjacent case is a period that
+has been closed without the page being loaded since: rather than create the next
+period the way the browser does, it returns what the app *would* open, marked
+`provisional`, and the widget says so.
+
+To install: paste the script into a new Scriptable script named **Burndown**,
+add a Scriptable widget to the home screen, and set *Script* to it and *When
+Interacting* to *Run Script*. Set `BASE` at the top of the file to your own
+`.ts.net` URL. The Tailscale app has to be connected for the widget to refresh;
+when it is not, the widget shows the last good figures with a `stale` mark
+rather than an error.
+
+Medium is the size to use — it fits the full stack. Small drops to the total
+alone, since nine bands in 155 points is a smear, and large adds a legend.
+
 ## Files
 
 | | |
@@ -214,6 +258,7 @@ the app by its `.ts.net` name.
 | `public/paydates.js` | Federal holidays and the 10th/25th rule |
 | `public/model.js` | All arithmetic, no DOM |
 | `public/app.js` | Views and charts |
+| `scriptable/burndown-widget.js` | The iPhone home-screen widget |
 
 Writes go through a temp file and a rename, and periods are upserted by id, so a
 bug in the open period cannot take closed history with it. Closed periods refuse

@@ -19,6 +19,15 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 
+// The browser's arithmetic, reused verbatim. model.js reads `PayDates` off the
+// global scope — in the browser both files are plain scripts sharing one — so
+// it has to be planted there before model.js is loaded. Requiring the same
+// files the page loads is the point: the widget must not drift from the chart
+// it mirrors, and a second implementation would.
+global.PayDates = require('./public/paydates.js');
+const Model = require('./public/model.js');
+const PayDates = global.PayDates;
+
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const ENV_PATH = path.join(ROOT, '.env');
@@ -227,6 +236,127 @@ async function resolveSources(config, live) {
   return { meta, problems };
 }
 
+// --- widget API -------------------------------------------------------------
+//
+// One read-only endpoint for the iPhone home-screen widget. The phone cannot
+// run the page, so the server runs the same model.js the page runs and hands
+// back the finished burndown — figures, not pixels, so the widget can draw at
+// whatever size iOS gives it.
+//
+// It is deliberately no more protected than the rest: everything here is
+// already readable at /api/state, and the whole app is reachable only from the
+// tailnet. Putting a token on this route alone would buy nothing.
+
+/** The open period, or a provisional one if the last close has not been followed
+ *  by a page load yet. Never written — the browser owns period creation, and a
+ *  widget refresh must not make history. */
+function openPeriodFor(config, periods, todayISO) {
+  const open = periods.find((p) => p.status !== 'closed');
+  if (open) return { period: open, provisional: false };
+  const sched = PayDates.periodContaining(todayISO);
+  return {
+    provisional: true,
+    period: {
+      id: sched.id,
+      start: sched.start,
+      scheduledEnd: sched.scheduledEnd,
+      status: 'open',
+      closedOn: null,
+      takeHome: config.income.takeHomePerPeriod,
+      spending: [], oneOffs: [], flows: [], balances: {},
+    },
+  };
+}
+
+/** Last closed snapshot, falling back to the opening balances in config —
+ *  the same rule the page uses. */
+function latestBalancesFor(config, periods) {
+  const closed = periods
+    .filter((p) => p.status === 'closed')
+    .sort((a, b) => a.start.localeCompare(b.start));
+  const last = closed[closed.length - 1];
+  if (last && last.balances && Object.keys(last.balances).length) return last.balances;
+  const out = {};
+  for (const [k, v] of Object.entries(config.openingBalances || {})) {
+    if (!k.startsWith('_')) out[k] = v;
+  }
+  return out;
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The burndown, flattened for a widget.
+ *
+ * `series` is the stacking order, bottom-up, ending in the unplanned cushion,
+ * and each point's `v` lines up with it index for index. Bands are clamped at
+ * empty exactly as the page clamps them — an overspent category has already
+ * handed its overspend to the cushion, so drawing it negative would count the
+ * same money twice. What the cushion is overdrawn by rides in `o` instead, to
+ * be drawn below the axis.
+ */
+function widgetBurndown(config, periods, todayISO) {
+  const { period, provisional } = openPeriodFor(config, periods, todayISO);
+  const days = Model.periodDays(period, todayISO);
+  const balances = latestBalancesFor(config, periods);
+  const wf = Model.waterfall(config, { days: days.projected, balances });
+  const bd = Model.burndown(config, period, wf, todayISO);
+
+  const warm = config.theme?.warmPalette || ['#6E3410', '#AC601A', '#C67C1F', '#D4AF37', '#E4C86A'];
+  const cool = (config.theme?.coolPalette || ['#2F6285'])[1] || '#2F6285';
+  const series = bd.rows
+    .map((r, i) => ({ id: r.id, name: r.name, color: warm[i % warm.length] }))
+    .concat([{ id: '__unplanned', name: 'Unplanned', color: cool }]);
+
+  // points[todayDay] is the state *after* today's logged spending — what is
+  // left right now, not what was left this morning.
+  const now = bd.points[Math.min(bd.todayDay, bd.points.length - 1)] || bd.points[0];
+  for (const sr of series) {
+    sr.left = sr.id === '__unplanned'
+      ? Model.round2(Math.max(0, now.unplanned))
+      : Model.round2(now.values[sr.id] || 0);
+  }
+
+  return {
+    asOf: todayISO,
+    generatedAt: new Date().toISOString(),
+    // True when no open period is stored and this is what the app *would*
+    // open. The widget says so rather than presenting a guess as a reading.
+    provisional,
+    period: {
+      id: period.id,
+      start: period.start,
+      scheduledEnd: period.scheduledEnd,
+      day: bd.todayDay,
+      days: bd.n,
+      remaining: days.remaining,
+      late: days.late,
+    },
+    startTotal: bd.startTotal,
+    leftNow: Model.round2(now.total),
+    endTotal: bd.endTotal,
+    endOverrun: bd.endOverrun,
+    overrun: Model.round2(now.overrun),
+    // What the days still to come can absorb. Zero once the stack is gone,
+    // rather than a negative allowance nobody can spend to.
+    perDay: Model.round2(Math.max(0, now.total) / Math.max(1, days.remaining)),
+    runsOutDay: bd.runsOutDay,
+    // A projection off two days of noise is not worth drawing conclusions
+    // from; the widget dims its verdict when this is false.
+    reliable: bd.reliable,
+    accent: config.theme?.accent || '#D4AF37',
+    series,
+    points: bd.points.map((pt) => ({
+      d: pt.day,
+      p: pt.projected,
+      v: series.map((sr) => (sr.id === '__unplanned'
+        ? Model.round2(Math.max(0, pt.unplanned))
+        : Model.round2(pt.values[sr.id] || 0))),
+      o: pt.overrun,
+    })),
+  };
+}
+
 // --- server -----------------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
@@ -242,6 +372,18 @@ const server = http.createServer(async (req, res) => {
       const live = url.searchParams.get('live') === '1';
       const { meta, problems } = await resolveSources(config, live);
       return json(res, 200, { config, periods, history, meta, problems });
+    }
+
+    // Everything an iPhone widget needs to draw the burndown, in one small
+    // payload. `today` is the *phone's* local date: the server may well be on
+    // UTC, and paydates.js is explicit that a UTC reading dates evening
+    // spending a day forward. A malformed value falls back to the server's own
+    // date rather than 400ing a home-screen widget into an error card.
+    if (pathname === '/api/widget/burndown' && (req.method === 'GET' || req.method === 'HEAD')) {
+      const asked = url.searchParams.get('today');
+      const todayISO = asked && ISO_DATE.test(asked) ? asked : PayDates.todayISO();
+      const [config, periods] = await Promise.all([readConfig(), readPeriods()]);
+      return json(res, 200, widgetBurndown(config, periods, todayISO));
     }
 
     if (pathname === '/api/config' && req.method === 'PUT') {

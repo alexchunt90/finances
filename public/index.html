@@ -58,7 +58,7 @@
   </section>
 
   <section class="console">
-    <h2 class="eyebrow">Where this period stands</h2>
+    <h2 class="eyebrow">This period</h2>
     <div class="readout">
       <div class="readout-primaries">
         <div class="readout-primary">
@@ -86,10 +86,19 @@
     <p class="verdict" id="verdict"></p>
   </section>
 
+  <section class="block" id="burndown-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Burndown</h2>
+      <p class="block-note" id="burndown-note"></p>
+    </div>
+    <div class="chart-shell"><svg id="chart-burndown" viewBox="0 0 760 300" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="legend" id="burndown-legend"></div>
+  </section>
+
   <section class="block">
     <div class="block-head">
       <h2 class="eyebrow">Log spending</h2>
-      <p class="block-note">Entries persist as you go and archive when the period closes. Anything without a category of its own goes under Other.</p>
+      <p class="block-note">Entries persist and archive when the period closes.</p>
     </div>
     <form class="entry-row" id="spend-form">
       <label>Date<input type="date" id="spend-date" required /></label>
@@ -164,7 +173,7 @@
     </div>
 
     <h3 class="eyebrow" style="margin-top:20px">Flows this period not already in the waterfall</h3>
-    <p class="block-note">Bonuses, one-time deposits, withdrawals. A transfer between two accounts nets to zero and never counts as a contribution.</p>
+    <p class="block-note">One-time deposits and withdrawals. A transfer between two accounts nets to zero and never counts as a contribution.</p>
     <form class="entry-row" id="flow-form">
       <label>Account<select id="flow-account"></select></label>
       <label>Type<select id="flow-type">
@@ -197,7 +206,7 @@
 <main class="frame" id="view-expenses" hidden>
 
   <section class="console">
-    <h2 class="eyebrow">What leaves every period</h2>
+    <h2 class="eyebrow">Total Expenses</h2>
     <div class="readout">
       <div class="readout-primaries">
         <div class="readout-primary">
@@ -212,8 +221,8 @@
         </div>
       </div>
       <dl class="readout-stats">
-        <div><dt>Committed</dt><dd data-num id="exp-committed">—</dd></div>
-        <div><dt>Targets</dt><dd data-num id="exp-targets">—</dd></div>
+        <div><dt>Bills</dt><dd data-num id="exp-committed">—</dd></div>
+        <div><dt>Spending</dt><dd data-num id="exp-targets">—</dd></div>
         <div><dt>Savings</dt><dd data-num id="exp-savings">—</dd></div>
       </dl>
     </div>
@@ -223,7 +232,7 @@
   <section class="block">
     <div class="block-head">
       <h2 class="eyebrow">1 · Committed bills</h2>
-      <p class="block-note">Fixed each period. Untick "necessary" for anything you could drop.</p>
+      <p class="block-note">Fixed each period.</p>
     </div>
     <div class="table-scroll">
       <table class="ledger">
@@ -243,7 +252,7 @@
   <section class="block">
     <div class="block-head">
       <h2 class="eyebrow">2 · Sinking funds for annual bills</h2>
-      <p class="block-note">Contribute per period, pay the bill from the fund. Paying it is a transfer, not new spending.</p>
+      <p class="block-note">Contribute each period, pay the bill from the fund.</p>
     </div>
     <div class="table-scroll">
       <table class="ledger">
@@ -256,7 +265,7 @@
   <section class="block">
     <div class="block-head">
       <h2 class="eyebrow">3 · Spending targets</h2>
-      <p class="block-note">Monthly amounts. Prorated by the real length of each period, which runs 13 to 19 days.</p>
+      <p class="block-note">Monthly amounts. Prorated by the real length of each period.</p>
     </div>
     <div class="table-scroll">
       <table class="ledger">
@@ -424,8 +433,7 @@
 
   <section class="console">
     <div class="block-head">
-      <h2 class="eyebrow">Where the balance sits</h2>
-      <p class="block-note">What paying the principal down buys you, either way: refinancing at today's market rate, or recasting your existing loan.</p>
+      <h2 class="eyebrow">Loan Details</h2>
     </div>
     <div class="readout">
       <div class="readout-primaries">
@@ -461,7 +469,7 @@
   <section class="block">
     <div class="block-head">
       <h2 class="eyebrow">Monthly payment curves</h2>
-      <p class="block-note">Two ways the payment can fall. <strong>Refinance</strong> steps down through pricing tiers; <strong>recast</strong> keeps your rate and payoff date and just re-amortizes. The dashed line is what you pay now.</p>
+      <p class="block-note"><strong>Refinance</strong> steps down through pricing tiers; <strong>recast</strong> keeps your rate and payoff date and just re-amortizes.</p>
     </div>
     <div class="chart-shell">
       <svg id="chart-mortgage" viewBox="0 0 760 380" preserveAspectRatio="xMidYMid meet"></svg>
@@ -486,7 +494,7 @@
 
   <section class="block">
     <div class="block-head">
-      <h2 class="eyebrow">Three ways to spend the same money</h2>
+      <h2 class="eyebrow">Comparison</h2>
       <p class="block-note" id="horizon-note"></p>
     </div>
     <div class="table-scroll">
@@ -500,15 +508,14 @@
     </div>
     <p class="block-note" style="margin-top:12px">
       Net cost is cash up front plus every payment made, plus whatever principal is still owed at the end of the
-      horizon. It is the only column that compares the three paths on equal terms, because a lower monthly payment
-      bought by stretching the term shows up here as a larger leftover balance.
+      horizon.
     </p>
   </section>
 
   <section class="block">
     <div class="block-head">
       <h2 class="eyebrow">Assumptions</h2>
-      <p class="block-note">Edits save to config.json like everything else. Rate-by-LTV tiers are set in <code>config.mortgage.ltvTiers</code>.</p>
+      <p class="block-note">Edits save to config.json.</p>
     </div>
     <div class="assumption-grid">
       <fieldset>
@@ -549,8 +556,7 @@
     </div>
     <p class="block-note">
       Every figure is principal, interest, and mortgage insurance only. Taxes and homeowners insurance are excluded
-      because they do not change when you refinance. Tier pricing is a stand-in for your lender's actual adjustments;
-      replace it with the numbers on a real loan estimate before deciding anything.
+      .
     </p>
   </section>
 

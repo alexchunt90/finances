@@ -453,6 +453,172 @@ function lineChart(svg, points, { target = null, xLabel = 'periods ahead' } = {}
   svg.append(lbl);
 }
 
+/**
+ * What is left to spend, drawn down day by day, stacked by where it is
+ * earmarked. Solid to today, then the same bands continuing at the pace set so
+ * far — the projected half is dimmed and the boundary marked, because one is
+ * what happened and the other is a guess.
+ */
+/** The burndown chart, its summary line, and the legend that names the bands. */
+function renderBurndown(cfg, period, wf) {
+  const bd = Model.burndown(cfg, period, wf, today());
+  const series = burndownChart($('chart-burndown'), bd, cfg) || [];
+
+  const note = $('burndown-note');
+  const left = bd.points[Math.min(bd.todayDay, bd.points.length - 1)];
+  const parts = [
+    `${fmt.usd0(bd.startTotal)} of spending money for ${bd.n} days, drawn down as it is logged.`,
+    // points[todayDay] is the state after today's logged spending — what is
+    // actually left right now, not what was left this morning.
+    //
+    `${fmt.usd(left ? left.total : 0)} left now, on day ${bd.todayDay} of ${bd.n}.`,
+  ];
+  if (bd.runsOutDay != null && bd.runsOutDay <= bd.n) {
+    parts.push(bd.runsOutDay <= bd.todayDay
+      ? `It is already gone.`
+      : `At this pace it runs out on day ${bd.runsOutDay} of ${bd.n}.`);
+  } else {
+    parts.push(`At this pace it lasts the period, finishing on ${fmt.usd(bd.endTotal)}.`);
+  }
+  if (left && left.overrun > 0) {
+    parts.push(`The unplanned cushion is ${fmt.usd(left.overrun)} overdrawn — that is the band below the axis.`);
+  }
+  // The projection is an assumption, not a reading of the days so far, so it
+  // is worth stating rather than leaving the reader to infer it.
+  parts.push('Past today it assumes an even share of each budget per day, plus anything already logged for those days.');
+  note.textContent = parts.join(' ');
+
+  const legend = $('burndown-legend');
+  legend.replaceChildren();
+  for (const sr of series) {
+    const value = sr.id === '__unplanned'
+      ? Math.max(0, left ? left.unplanned : 0)
+      : (left ? left.values[sr.id] || 0 : 0);
+    const item = el('div', `legend-item${value > 0.005 ? '' : ' is-zero'}`);
+    const sw = el('span', 'legend-swatch');
+    sw.style.background = sr.color;
+    item.append(sw, document.createTextNode(sr.name), el('span', 'legend-value', fmt.usd0(value)));
+    legend.append(item);
+  }
+}
+
+function burndownChart(svg, bd, cfg) {
+  svg.replaceChildren();
+  if (!bd || bd.points.length < 2) return emptyChart(svg, 'no open period');
+
+  const W = 760, H = 300;
+  const k = chartScale(svg, W);
+  const pad = { l: 14 + 48 * k, r: 16, t: 14 * k, b: 20 + 20 * k };
+  const plotW = W - pad.l - pad.r;
+  const plotH = H - pad.t - pad.b;
+
+  // Day 1 at the left edge, the point past the last day at the right, so the
+  // final day's spending has somewhere to land.
+  const x = (day) => pad.l + ((day - 1) / Math.max(1, bd.n)) * plotW;
+  const hi = Math.max(bd.startTotal, 1);
+  // The cushion can be overdrawn by spending that already happened, so the axis
+  // reaches below zero rather than quietly clipping the debt away.
+  const lo = Math.min(0, ...bd.points.map((pt) => pt.unplanned));
+  const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * plotH;
+
+  const warm = cfg.theme?.warmPalette || ['#6E3410', '#AC601A', '#C67C1F', '#D4AF37', '#E4C86A'];
+  const cool = (cfg.theme?.coolPalette || ['#2F6285'])[1] || '#2F6285';
+  // Earmarked budgets at the bottom, the uncommitted cushion riding on top.
+  const series = bd.rows.map((r, i) => ({ id: r.id, name: r.name, color: warm[i % warm.length] }))
+    .concat([{ id: '__unplanned', name: 'Unplanned', color: cool }]);
+  // Bands are clamped at empty: a category that overspends has already handed
+  // the overspend to the unplanned pool, so drawing it negative would count it
+  // twice.
+  const valueAt = (pt, id) => (id === '__unplanned' ? Math.max(0, pt.unplanned) : (pt.values[id] || 0));
+
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + ((hi - lo) * i) / 4;
+    const py = y(v);
+    svg.append(svgEl('line', { class: 'chart-grid', x1: pad.l, y1: py, x2: W - pad.r, y2: py }));
+    const t = svgEl('text', { x: pad.l - 8 * k, y: py + 4 * k, 'text-anchor': 'end', class: 'axis-text' });
+    t.textContent = fmt.short(v);
+    svg.append(t);
+  }
+
+  const band = (upper, lower, fill, cls) => {
+    if (upper.every((v, i) => Math.abs(v - lower[i]) < 0.005)) return false;
+    const top = bd.points.map((pt, i) => `${i ? 'L' : 'M'}${x(pt.day).toFixed(1)},${y(upper[i]).toFixed(1)}`).join(' ');
+    const bottom = bd.points.map((pt, i) => `L${x(pt.day).toFixed(1)},${y(lower[i]).toFixed(1)}`).reverse().join(' ');
+    const attrs = { d: `${top} ${bottom} Z`, stroke: 'none' };
+    if (cls) attrs.class = cls; else attrs.fill = fill;
+    svg.append(svgEl('path', attrs));
+    return true;
+  };
+
+  let lower = bd.points.map(() => 0);
+  for (const sr of series) {
+    const upper = lower.map((v, i) => v + valueAt(bd.points[i], sr.id));
+    // A band empty for the whole period is a legend entry with nothing to
+    // point at.
+    if (band(upper, lower, sr.color)) lower = upper;
+    else lower = upper;
+  }
+
+  // What the cushion is overdrawn by, hanging below the axis. Only spending
+  // that already happened can put it here.
+  band(bd.points.map(() => 0), bd.points.map((pt) => Math.min(0, pt.unplanned)), null, 'chart-overdrawn');
+  if (lo < 0) {
+    svg.append(svgEl('line', { class: 'zero-line', x1: pad.l, y1: y(0), x2: W - pad.r, y2: y(0) }));
+  }
+
+  // Everything from the first projected point rightward is an estimate. One
+  // scrim over the lot says so once, rather than restyling every band.
+  const edge = Math.min(bd.todayDay + 1, bd.n + 1);
+  if (edge < bd.n + 1) {
+    svg.append(svgEl('rect', {
+      class: 'chart-projected', x: x(edge), y: pad.t,
+      width: Math.max(0, x(bd.n + 1) - x(edge)), height: plotH,
+    }));
+  }
+  svg.append(svgEl('line', { class: 'chart-now', x1: x(edge), y1: pad.t, x2: x(edge), y2: pad.t + plotH }));
+  const nowLabel = svgEl('text', {
+    class: 'chart-now-label', x: x(edge) + 6 * k, y: pad.t + 12 * k,
+    'text-anchor': x(edge) > pad.l + plotW * 0.7 ? 'end' : 'start',
+  });
+  nowLabel.textContent = 'today';
+  if (x(edge) > pad.l + plotW * 0.7) nowLabel.setAttribute('x', x(edge) - 6 * k);
+  svg.append(nowLabel);
+
+  // The day it all runs out, which is the whole reason for projecting.
+  if (bd.runsOutDay != null) {
+    const rx = x(bd.runsOutDay);
+    svg.append(svgEl('line', { class: 'chart-empty-rule', x1: rx, y1: pad.t, x2: rx, y2: pad.t + plotH }));
+    // Flips to the right of its rule near the left edge, where a right-anchored
+    // label would run back over the y-axis figures.
+    const nearLeft = rx < pad.l + plotW * 0.38;
+    const lbl = svgEl('text', {
+      class: 'chart-empty-label', x: rx + (nearLeft ? 6 : -6) * k,
+      y: pad.t + plotH - 8 * k, 'text-anchor': nearLeft ? 'start' : 'end',
+    });
+    lbl.textContent = `empty day ${bd.runsOutDay}`;
+    svg.append(lbl);
+  }
+
+  svg.append(svgEl('line', { class: 'chart-axis', x1: pad.l, y1: pad.t + plotH, x2: W - pad.r, y2: pad.t + plotH }));
+
+  const ticks = [];
+  for (let d = 1; d <= bd.n; d++) ticks.push({ x: x(d), text: String(d) });
+  for (const tick of spacedTicks(ticks, k, { min: pad.l, max: W - pad.r })) {
+    const t = svgEl('text', { x: tick.x, y: pad.t + plotH + 4 + 14 * k, 'text-anchor': 'middle', class: 'axis-text' });
+    t.textContent = tick.text;
+    svg.append(t);
+  }
+  // At phone type the title has nowhere to sit: the tick row already fills the
+  // bottom gutter. The numbered ticks and the note above read as days without
+  // it, so it is dropped rather than crammed in.
+  if (k <= 1.3) {
+    const axisTitle = svgEl('text', { class: 'chart-axis-title', x: pad.l, y: H - 6 });
+    axisTitle.textContent = 'day of period';
+    svg.append(axisTitle);
+  }
+  return series;
+}
+
 function barChart(svg, bars) {
   svg.replaceChildren();
   if (!bars.length) return emptyChart(svg, 'no closed periods yet');
@@ -534,6 +700,8 @@ function renderBudget() {
       : '') +
     (settlement.surprises > 0 ? ` ${fmt.usd(settlement.surprises)} of surprise bills draws on this first.` : '');
 
+  renderBurndown(cfg, period, wf);
+
   $('big-unused').textContent = fmt.bare(settlement.plannedLeft);
   const overCats = pace.rows.filter((r) => r.overage > 0);
   $('unused-caption').textContent =
@@ -544,7 +712,13 @@ function renderBudget() {
     (overCats.length
       ? `${overCats.map((r) => `${r.name} is ${fmt.usd(r.overage)} over`).join(', ')}.`
       : `Nothing is over its category budget yet.`);
-  $('stat-day').textContent = `${days.elapsed} / ${days.projected}`;
+  // Today counts. `days.elapsed` is completed days — the figure proration is
+  // built on, since today's allowance is not earned until the day is done —
+  // but as a position in the period it reads a day behind, and disagrees with
+  // the burndown axis where today is a column of its own. Closed periods need
+  // no adjustment: projected equals elapsed, so the min leaves them alone.
+  const dayOfPeriod = Math.min(days.projected, days.elapsed + 1);
+  $('stat-day').textContent = `${dayOfPeriod} / ${days.projected}`;
   // Split the same way the two pools are: spending that fits inside a category
   // budget draws on planned, anything past it — plus surprise bills — draws on
   // unplanned. The two add up to everything logged this period.
@@ -552,15 +726,15 @@ function renderBudget() {
   $('stat-unplanned-spend').textContent = fmt.usd(Model.round2(pace.overage + settlement.surprises));
   $('stat-projected').textContent = pace.reliable ? fmt.usd(pace.projected) : '—';
   $('stat-oneoff').textContent = fmt.usd(settlement.surprises);
-  $('period-bar-fill').style.width = `${Math.min(100, (days.elapsed / days.projected) * 100)}%`;
+  $('period-bar-fill').style.width = `${Math.min(100, (dayOfPeriod / days.projected) * 100)}%`;
 
   const over = Model.round2(pace.projected - pace.budget);
   $('verdict').innerHTML = !pace.reliable
     ? `<strong>${fmt.usd(pace.spent)}</strong> of the ${fmt.usd(pace.budget)} prorated for a ${days.projected}-day period. ` +
       `Projections start on day ${pace.minDays}.`
     : over > 0
-      ? `At this pace variable spending lands <strong>${fmt.usd(over)} over</strong> the ${fmt.usd(pace.budget)} prorated for a ${days.projected}-day period.`
-      : `At this pace variable spending lands <strong>${fmt.usd(-over)} under</strong> the ${fmt.usd(pace.budget)} prorated for a ${days.projected}-day period.`;
+      ? `At this pace planned spending lands <strong>${fmt.usd(over)} over</strong> the ${fmt.usd(pace.budget)} prorated for a ${days.projected}-day period.`
+      : `At this pace planned spending lands <strong>${fmt.usd(-over)} under</strong> the ${fmt.usd(pace.budget)} prorated for a ${days.projected}-day period.`;
 
   // Waterfall
   const body = $('waterfall-rows');
@@ -943,7 +1117,7 @@ function renderExpenses() {
   const annualTargets = Model.sum(cfg.expenses.targets, (t) => t.monthly) * 12;
   const annual = Model.round2((committed + savings) * 24 + annualTargets);
   $('exp-caption').textContent =
-    `Across a ${days.projected}-day period — bills, targets, and savings. ${fmt.usd(annual)} a year.`;
+    `Across a ${days.projected}-day period — committed, spending, and savings. ${fmt.usd(annual)} a year.`;
   $('exp-committed').textContent = fmt.usd(committed);
   $('exp-targets').textContent = fmt.usd(targets);
   $('exp-savings').textContent = fmt.usd(savings);
@@ -952,7 +1126,7 @@ function renderExpenses() {
   $('exp-unallocated-wrap').classList.toggle('is-warn', unallocated < 0);
   $('exp-unallocated-caption').textContent = unallocated < 0
     ? `The plan spends ${fmt.usd(-unallocated)} more than ${fmt.usd(period.takeHome)} of take-home. Something here has to give.`
-    : `Take-home not claimed by any bill, target, or savings tier. This is what surprise bills draw on before the buffer.`;
+    : `Take-home not claimed by a bill, a spending target, or a savings tier. This is what surprise bills draw on before the buffer.`;
 
   const computed = Model.scheduledTransfer(cfg);
   const actual = cfg.waterfall.sinkingTransferActual;
@@ -976,8 +1150,16 @@ function renderExpenses() {
     const tr = el('tr');
     tr.append(el('td', null, e.name));
     tr.append(el('td', null, e.category));
-    tr.append(numberCell(e.perPeriod, (v) => { e.perPeriod = v; queueSave('config'); render(); }));
-    tr.append(el('td', 'r', fmt.usd(e.perPeriod * 2)));
+    // A bill arrives monthly, so that is the figure worth typing; per period is
+    // half of it. Storage still holds perPeriod, which everything else sums —
+    // halving and doubling are exact in binary floating point, so the month
+    // figure round-trips to the cent.
+    tr.append(el('td', 'r', fmt.usd(e.perPeriod)));
+    tr.append(numberCell(Model.round2(e.perPeriod * 2), (v) => {
+      e.perPeriod = v / 2;
+      queueSave('config');
+      render();
+    }));
     tr.append(el('td', 'r', fmt.usd(e.perPeriod * 24)));
     tr.append(checkCell(e.necessary, (v) => { e.necessary = v; queueSave('config'); renderExpenses(); }));
     cbody.append(tr);

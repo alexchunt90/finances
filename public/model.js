@@ -189,6 +189,110 @@ const Model = (() => {
     };
   }
 
+  /**
+   * What is left to spend, day by day. Every category budget and the unplanned
+   * pool start full on day 1 and draw down as spending is logged. Past today
+   * the lines keep falling at the pace set so far, which is what makes running
+   * out visible before it happens rather than after.
+   *
+   * A point is the state at the *start* of its day, so day 1 is the full
+   * amount, untouched. One extra point past the last day carries the final
+   * day's spending, which would otherwise never appear.
+   */
+  function burndown(cfg, period, wf, todayISO) {
+    const days = periodDays(period, todayISO);
+    const n = days.projected;
+    const p = pace(cfg, period, todayISO);
+    // Today is the day after the last fully elapsed one.
+    const todayDay = Math.min(n, days.elapsed + 1);
+
+    const blank = () => new Array(n + 2).fill(0);
+    const dayOf = (iso) =>
+      Math.min(Math.max(PayDates.daysBetween(period.start, iso) + 1, 1), n);
+
+    const byDay = {};
+    for (const t of cfg.expenses.targets) byDay[t.id] = blank();
+    // Spending logged against a target deleted since is still money that left,
+    // so it draws on the unplanned pool rather than vanishing from the chart.
+    // Surprise bills draw there too — that is what that pool is for.
+    const unbudgeted = blank();
+    for (const s of period.spending || []) (byDay[s.targetId] || unbudgeted)[dayOf(s.date)] += s.amount;
+    for (const o of period.oneOffs || []) unbudgeted[dayOf(o.date)] += o.amount;
+
+    const rows = cfg.expenses.targets.map((t) => {
+      const row = p.rows.find((r) => r.id === t.id);
+      const budget = row ? row.budget : 0;
+      return {
+        id: t.id,
+        name: t.name,
+        budget,
+        // An even share of the period's budget per day — spending exactly on
+        // pace. Not the rate observed so far: a few days of noise reads as a
+        // trend, and a category with nothing logged yet would project flat
+        // across the rest of the period.
+        rate: round2(budget / n),
+      };
+    });
+
+    const left = {};
+    for (const r of rows) left[r.id] = r.budget;
+    // The same cushion settle() works from: pay no bill, saving or category
+    // budget has a claim on.
+    let unplanned = round2(period.takeHome - committedTotal(cfg) - wf.savingsTotal - p.budget);
+
+    const points = [];
+    for (let d = 1; d <= n + 1; d++) {
+      points.push({
+        day: d,
+        projected: d > todayDay,
+        values: Object.fromEntries(rows.map((r) => [r.id, round2(Math.max(0, left[r.id]))])),
+        // The cushion can be overdrawn by spending that already happened, and
+        // the total says so: the chart draws that as a band below the axis
+        // rather than pretending the money is still there.
+        unplanned: round2(unplanned),
+        overrun: round2(Math.max(0, -unplanned)),
+        total: round2(sum(rows, (r) => Math.max(0, left[r.id])) + unplanned),
+      });
+      if (d > n) break;
+
+      for (const r of rows) {
+        // Logged spending comes off first, whichever side of today it falls,
+        // and overspending a category draws the remainder from the unplanned
+        // pool — the same way settle() accounts for it at close. A logged
+        // amount is money committed, so the cushion absorbs it either way.
+        left[r.id] = round2(left[r.id] - byDay[r.id][d]);
+        if (left[r.id] < 0) {
+          unplanned = round2(unplanned + left[r.id]);
+          left[r.id] = 0;
+        }
+        // Past today, the pace assumption fills in the ordinary days around
+        // whatever is already logged. It stops at empty rather than charging
+        // on into the cushion: an overdraft nobody has committed to would
+        // compound, with every exhausted category draining it every remaining
+        // day.
+        if (d > todayDay) left[r.id] = round2(Math.max(0, left[r.id] - r.rate));
+      }
+      // Surprise bills, and spending against a target deleted since, are logged
+      // amounts rather than projections, so they land on their own day either
+      // side of today. Nothing is assumed on top of them: a surprise is an
+      // event, not a rate.
+      unplanned = round2(unplanned - unbudgeted[d]);
+    }
+
+    // Empty means the visible stack is gone — every category budget spent and
+    // the cushion overdrawn.
+    const empty = points.find((pt) => pt.total <= 0);
+    return {
+      n, todayDay, days, rows, points,
+      startTotal: points[0].total,
+      endTotal: points[points.length - 1].total,
+      endOverrun: points[points.length - 1].overrun,
+      // The day the whole stack is gone, if this pace holds.
+      runsOutDay: empty ? empty.day : null,
+      reliable: p.reliable,
+    };
+  }
+
   const surpriseTotal = (period) => round2(sum(period.oneOffs || [], (o) => o.amount));
 
   /**
@@ -538,7 +642,7 @@ const Model = (() => {
 
   return {
     round2, sum, prorate, DAYS_PER_MONTH, bucketDrift,
-    committedTotal, sinkingTotal, scheduledTransfer, targetsFor, targetsTotal, necessaryFloor,
+    committedTotal, sinkingTotal, scheduledTransfer, targetsFor, targetsTotal, necessaryFloor, burndown,
     waterfall, periodDays, pace, surpriseTotal, settle, sweepPlan,
     reconcile, plannedFlows, contributed, windfalls,
     averageDraw, bufferTrajectory, emergencyTrajectory, savingsTrajectory, sinkingCoverage, assetSummary,

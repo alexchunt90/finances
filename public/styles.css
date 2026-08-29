@@ -497,6 +497,17 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   text-transform: uppercase; fill: var(--gain);
 }
 .chart-cliff-label { font-family: var(--mono); font-size: calc(11px * var(--chart-k, 1)); fill: var(--gain); }
+/* Everything right of today is an extrapolation. One scrim says so across all
+   the bands at once. */
+.chart-projected { fill: var(--paper); opacity: 0.42; }
+.chart-overdrawn { fill: var(--warn); opacity: 0.55; }
+.chart-empty-rule { stroke: var(--warn); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.chart-empty-label {
+  font-family: var(--display); font-size: calc(11px * var(--chart-k, 1)); letter-spacing: 0.1em;
+  text-transform: uppercase; fill: var(--warn);
+  paint-order: stroke; stroke: var(--card-sunk); stroke-width: calc(3px * var(--chart-k, 1));
+  stroke-linejoin: round;
+}
 .chart-marker-line { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 3; }
 .chart-marker-dot { stroke: var(--card-sunk); stroke-width: 2; }
 .chart-marker-dot.is-refi { fill: var(--accent); }
@@ -575,7 +586,9 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 
 @media (min-width: 900px) {
   .frame { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .console, #close-block, .banner { grid-column: 1 / -1; }
+  /* The burndown is a chart like the ones on the other tabs: 16 days of stacked
+     bands squeezed into half a column is unreadable. */
+  .console, #close-block, #burndown-block, .banner { grid-column: 1 / -1; }
   /* Expenses and Assets are tables and charts — they read better full width
      than squeezed into a column. Budget keeps the two-column grid. */
   #view-expenses .block, #view-assets .block,

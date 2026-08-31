@@ -272,6 +272,11 @@ const Model = (() => {
     // The same cushion settle() works from: pay no bill, saving or category
     // budget has a claim on.
     let unplanned = round2(period.takeHome - committedTotal(cfg) - wf.savingsTotal - p.budget);
+    // The cushion draws down at pace too. It is money for the period like any
+    // category budget, so spending exactly on pace should empty it by close —
+    // holding it flat drew a plan that never spends its uncommitted pay.
+    // Fixed off the opening figure, the same way a category's rate is.
+    const unplannedRate = round2(Math.max(0, unplanned) / n);
 
     const points = [];
     for (let d = 1; d <= n + 1; d++) {
@@ -310,6 +315,13 @@ const Model = (() => {
       // side of today. Nothing is assumed on top of them: a surprise is an
       // event, not a rate.
       unplanned = round2(unplanned - unbudgeted[d]);
+
+      // Past today the cushion drains at its own pace, stopping at empty. It is
+      // never pushed further negative: a pool already overdrawn by real
+      // spending would compound an overdraft nobody has committed to.
+      if (d > todayDay && unplannedRate > 0) {
+        unplanned = round2(unplanned - Math.min(unplannedRate, Math.max(0, unplanned)));
+      }
     }
 
     // Empty means the visible stack is gone — every category budget spent and

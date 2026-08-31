@@ -520,7 +520,7 @@ function renderBurndown(cfg, period, wf) {
   }
   // The projection is an assumption, not a reading of the days so far, so it
   // is worth stating rather than leaving the reader to infer it.
-  parts.push('Past today it assumes an even share of each budget per day, plus anything already logged for those days.');
+  parts.push('Past today it assumes an even share of each budget and the cushion per day, plus anything already logged for those days.');
   note.textContent = parts.join(' ');
 
   const legend = $('burndown-legend');

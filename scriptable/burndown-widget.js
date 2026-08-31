@@ -150,8 +150,8 @@ function chartImage(data, w, h, { stacked = true } = {}) {
   }
 
   // Everything right of today is an assumption — an even share of each budget
-  // per day, plus whatever is already logged for those days. One scrim says so
-  // once, rather than restyling every band.
+  // and the unplanned cushion per day, plus whatever is already logged for
+  // those days. One scrim says so once, rather than restyling every band.
   const edge = Math.min(data.period.day + 1, n + 1);
   if (edge <= n) {
     dc.setFillColor(new Color('#0a0a0b', 0.42));

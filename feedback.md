@@ -1,1 +1,0 @@
-* I don't need to edit the Rate By Loan-To-Value assumptions in app, let's keep that in the config only.

@@ -166,6 +166,25 @@ AWS_SECRET_ACCESS_KEY=...
 Anything speaking the S3 API works. Set `S3_ENDPOINT` and requests go path-style
 to that host instead of to AWS, which is what Cloudflare R2 and MinIO want.
 
+### What the credentials need
+
+[`deploy/iam-policy.json`](deploy/iam-policy.json) is the whole of it — swap
+`YOUR-BUCKET` for your bucket in both ARNs, and note that only the first one
+carries the `/finances/*` prefix:
+
+```bash
+aws iam create-user --user-name finances-app
+aws iam put-user-policy --user-name finances-app \
+  --policy-name finances-state --policy-document file://deploy/iam-policy.json
+aws iam create-access-key --user-name finances-app
+```
+
+The app only ever issues `GET` and `PUT`, so the `s3:ListBucket` in there looks
+redundant. It is not. Without it S3 answers a `GET` for an object that simply is
+not there with **403**, not 404 — and the empty-bucket case is exactly where
+that bites, because the app reads the 403 as bad credentials and the seed that
+should populate the bucket never runs.
+
 Moving existing state into a bucket is a copy:
 
 ```bash
@@ -358,6 +377,7 @@ alone, since nine bands in 155 points is a smear, and large adds a legend.
 | `public/app.js` | Views and charts |
 | `lib/store.js` | State on disk or in a bucket, and the conditional writes |
 | `example/` | Stub data, seeded into an empty store on first run |
+| `deploy/iam-policy.json` | The least the app's S3 credentials can get away with |
 | `scriptable/burndown-widget.js` | The iPhone home-screen widget |
 
 Periods are upserted by id, so a bug in the open period cannot take closed

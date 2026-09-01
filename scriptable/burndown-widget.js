@@ -7,7 +7,8 @@
 
    Draws the budget tab's burndown chart on the iPhone home screen: what is
    left to spend, stacked by where it is earmarked, solid to today and dimmed
-   past it. Tapping opens the budget view in Chrome.
+   past it. Tapping opens the log-spending form in Chrome, since the reason to
+   look at a burndown is usually that you have something to add to it.
 
    The server does the arithmetic — GET api/widget/burndown returns the same
    figures model.js gives the page, so the widget can never disagree with the
@@ -30,12 +31,16 @@
 // Your own host. A tailnet name identifies your machine, so it stays out of the
 // repository — fill this in on the phone, where the script actually lives.
 const BASE = 'https://YOUR-HOST.ts.net/finances/';
-const VIEW = 'budget';
+
+// The section to land on. A fragment names a section and the app works out
+// which tab holds it, so this does not have to say `?view=budget` as well —
+// and it keeps working if the form ever moves to another tab.
+const SECTION = 'log-spending';
 
 // Chrome's own scheme, so the tap lands in Chrome whether or not it is the
 // system default browser. `googlechromes` is the https variant — plain
 // `googlechrome` is http, and would be downgraded on arrival.
-const OPEN_URL = `googlechromes://${BASE.replace(/^https?:\/\//, '')}?view=${VIEW}`;
+const OPEN_URL = `googlechromes://${BASE.replace(/^https?:\/\//, '')}#${SECTION}`;
 
 // How long iOS should wait before asking for fresh figures. A suggestion, not
 // a promise — the system budgets widget refreshes and will stretch it.

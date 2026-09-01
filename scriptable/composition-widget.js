@@ -8,7 +8,7 @@
    Draws the assets tab's composition chart on the iPhone home screen: net
    worth over the whole history, stacked by account, illiquid on the bottom in
    cool shades and liquid above in warm. The warm band is the part you could
-   actually reach. Tapping opens the assets view in Chrome.
+   actually reach. Tapping opens the same chart, full size, in Chrome.
 
    The server does the arithmetic — GET api/widget/composition returns the same
    series, in the same order and colours, that model.js gives the page, so the
@@ -31,12 +31,16 @@
 // Your own host. A tailnet name identifies your machine, so it stays out of the
 // repository — fill this in on the phone, where the script actually lives.
 const BASE = 'https://YOUR-HOST.ts.net/finances/';
-const VIEW = 'assets';
+
+// The section to land on. A fragment names a section and the app works out
+// which tab holds it, so this does not have to say `?view=assets` as well —
+// and it keeps working if the chart ever moves to another tab.
+const SECTION = 'composition';
 
 // Chrome's own scheme, so the tap lands in Chrome whether or not it is the
 // system default browser. `googlechromes` is the https variant — plain
 // `googlechrome` is http, and would be downgraded on arrival.
-const OPEN_URL = `googlechromes://${BASE.replace(/^https?:\/\//, '')}?view=${VIEW}`;
+const OPEN_URL = `googlechromes://${BASE.replace(/^https?:\/\//, '')}#${SECTION}`;
 
 // Balances move on markets and on period closes, neither of which is minute to
 // minute. Slower than the burndown, which changes every time spending is

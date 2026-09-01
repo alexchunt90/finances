@@ -168,15 +168,25 @@ to that host instead of to AWS, which is what Cloudflare R2 and MinIO want.
 
 ### What the credentials need
 
-[`deploy/iam-policy.json`](deploy/iam-policy.json) is the whole of it — swap
-`YOUR-BUCKET` for your bucket in both ARNs, and note that only the first one
-carries the `/finances/*` prefix:
+[`deploy/iam-policy.json`](deploy/iam-policy.json) is the whole of it. It ships
+with a placeholder bucket name, so substitute rather than passing the file
+straight to `--policy-document` — an unsubstituted `YOUR-BUCKET` attaches
+without complaint and then denies every call:
 
 ```bash
 aws iam create-user --user-name finances-app
+sed 's/YOUR-BUCKET/my-finances/g' deploy/iam-policy.json > /tmp/policy.json
 aws iam put-user-policy --user-name finances-app \
-  --policy-name finances-state --policy-document file://deploy/iam-policy.json
+  --policy-name finances-state --policy-document file:///tmp/policy.json
 aws iam create-access-key --user-name finances-app
+rm /tmp/policy.json
+```
+
+Note that only the object ARN carries the `/finances/*` suffix; the bucket ARN
+must have no path at all. To check what actually landed:
+
+```bash
+aws iam get-user-policy --user-name finances-app --policy-name finances-state
 ```
 
 The app only ever issues `GET` and `PUT`, so the `s3:ListBucket` in there looks

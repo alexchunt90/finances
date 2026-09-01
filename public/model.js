@@ -324,12 +324,28 @@ const Model = (() => {
       }
     }
 
+    // Spending exactly on pace: the whole period's spending money drawn down in
+    // n equal daily shares. One level per day rather than a continuous slope,
+    // because a day's share is not earned partway through it — the same reason
+    // proration counts completed days. How that gets drawn is the chart's
+    // business. The stack sitting below this is spending faster than pace.
+    //
+    // It reads off the total, cushion included, so that it can be compared
+    // against the top of the stack. A line covering the category budgets alone
+    // would sit inside the stack with nothing meaningful above or below it.
+    const startTotal = points[0].total;
+    for (const pt of points) {
+      pt.pace = round2(Math.max(0, startTotal * (1 - (pt.day - 1) / n)));
+    }
+
     // Empty means the visible stack is gone — every category budget spent and
     // the cushion overdrawn.
     const empty = points.find((pt) => pt.total <= 0);
     return {
       n, todayDay, days, rows, points,
-      startTotal: points[0].total,
+      startTotal,
+      // An even day's share of everything there is to spend.
+      paceRate: round2(startTotal / n),
       endTotal: points[points.length - 1].total,
       endOverrun: points[points.length - 1].overrun,
       // The day the whole stack is gone, if this pace holds.

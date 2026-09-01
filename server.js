@@ -297,7 +297,9 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  * empty exactly as the page clamps them — an overspent category has already
  * handed its overspend to the cushion, so drawing it negative would count the
  * same money twice. What the cushion is overdrawn by rides in `o` instead, to
- * be drawn below the axis.
+ * be drawn below the axis. `c` is that day's pace level — the whole period's
+ * money in equal daily shares — which the widget draws as the same reference
+ * line the page draws.
  */
 function widgetBurndown(config, periods, todayISO) {
   const { period, provisional } = openPeriodFor(config, periods, todayISO);
@@ -357,6 +359,7 @@ function widgetBurndown(config, periods, todayISO) {
         ? Model.round2(Math.max(0, pt.unplanned))
         : Model.round2(pt.values[sr.id] || 0))),
       o: pt.overrun,
+      c: pt.pace,
     })),
   };
 }

@@ -599,6 +599,20 @@ function renderBurndown(cfg, period, wf) {
   } else {
     parts.push(`At this pace it lasts the period, finishing on ${fmt.usd(bd.endTotal)}.`);
   }
+  // Where the dashed pace line sits, and which side of it you are on. Same
+  // point on the x-axis as the stack top it is being compared against, so the
+  // sentence agrees with what the chart shows.
+  if (left) {
+    const gap = Model.round2(left.total - left.pace);
+    parts.push(
+      `Pace is ${fmt.usd(bd.paceRate)} a day, the dashed line — ` +
+      (Math.abs(gap) < 0.005
+        ? `exactly where you are.`
+        : gap > 0
+          ? `${fmt.usd(gap)} above it, so slower than pace.`
+          : `${fmt.usd(-gap)} below it, so faster than pace.`)
+    );
+  }
   if (left && left.overrun > 0) {
     parts.push(`The unplanned cushion is ${fmt.usd(left.overrun)} overdrawn — that is the band below the axis.`);
   }
@@ -694,6 +708,27 @@ function burndownChart(svg, bd, cfg) {
       width: Math.max(0, x(bd.n + 1) - x(edge)), height: plotH,
     }));
   }
+  // Spending exactly on pace — the whole period's money in n equal daily
+  // shares. Held flat through the front of each day and drawn down across the
+  // back of it, which is the same horizontal-then-slope shape the bands take.
+  // A true staircase reads as a different chart laid over the top: its right
+  // angles have no counterpart anywhere else in the drawing.
+  //
+  // The slope still lands exactly on the day boundary, so the line and the
+  // stack can be read against each other at every gridline.
+  //
+  // Drawn over the scrim rather than under it: the line is a fixed reference
+  // for the whole period, not a projection that stops being real past today.
+  // The stack below it is spending faster than pace.
+  const ramp = (x(2) - x(1)) * 0.5;
+  const steps = [`M${x(bd.points[0].day).toFixed(1)},${y(bd.points[0].pace).toFixed(1)}`];
+  for (let i = 1; i < bd.points.length; i++) {
+    const px = x(bd.points[i].day);
+    steps.push(`L${(px - ramp).toFixed(1)},${y(bd.points[i - 1].pace).toFixed(1)}`);
+    steps.push(`L${px.toFixed(1)},${y(bd.points[i].pace).toFixed(1)}`);
+  }
+  svg.append(svgEl('path', { class: 'chart-pace', d: steps.join(' ') }));
+
   svg.append(svgEl('line', { class: 'chart-now', x1: x(edge), y1: pad.t, x2: x(edge), y2: pad.t + plotH }));
   const nowLabel = svgEl('text', {
     class: 'chart-now-label', x: x(edge) + 6 * k, y: pad.t + 12 * k,

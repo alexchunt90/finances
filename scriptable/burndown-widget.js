@@ -157,6 +157,24 @@ function chartImage(data, w, h, { stacked = true } = {}) {
     dc.setFillColor(new Color('#0a0a0b', 0.42));
     dc.fillRect(new Rect(X(edge), 0, w - X(edge), h));
   }
+  // Spending exactly on pace — the whole period's money in equal daily shares,
+  // computed on the server so this cannot disagree with the page. Flat through
+  // the front of each day, sloping down across the back of it, which is the
+  // shape the bands take; a true staircase's right angles have no counterpart
+  // anywhere else in the drawing.
+  //
+  // Over the scrim, because the line is a fixed reference for the whole period
+  // rather than a projection. The stack below it is spending faster than pace.
+  if (pts.every((p) => typeof p.c === 'number')) {
+    const ramp = (X(2) - X(1)) * 0.5;
+    const line = [[X(pts[0].d), Y(pts[0].c)]];
+    for (let i = 1; i < pts.length; i++) {
+      line.push([X(pts[i].d) - ramp, Y(pts[i - 1].c)]);
+      line.push([X(pts[i].d), Y(pts[i].c)]);
+    }
+    dashedPath(dc, line, new Color('#f4f4f6', 0.75), Math.max(1.5, h / 100), Math.max(4, (X(2) - X(1)) / 5));
+  }
+
   dashedLine(dc, X(edge), 0, X(edge), h, INK_SOFT, Math.max(1.5, h / 100));
 
   // The day it all runs out, which is the whole reason for projecting.
@@ -167,24 +185,46 @@ function chartImage(data, w, h, { stacked = true } = {}) {
   return dc.getImage();
 }
 
-/** DrawContext has no dash pattern, so the dashes are drawn as segments. */
-function dashedLine(dc, x1, y1, x2, y2, color, width) {
-  const len = Math.hypot(x2 - x1, y2 - y1);
-  if (len < 0.5) return;
-  const ux = (x2 - x1) / len;
-  const uy = (y2 - y1) / len;
-  const dash = Math.max(4, len / 26);
+/**
+ * DrawContext has no dash pattern, so the dashes are drawn as segments.
+ *
+ * The pattern runs continuously across the joints rather than restarting at
+ * each one: the pace line is made of thirty-odd short flats and slopes, and
+ * restarting at every joint would bunch dashes at the corners and read as a
+ * different kind of line from the straight rules beside it.
+ */
+function dashedPath(dc, points, color, width, dash) {
   const gap = dash * 0.8;
   dc.setStrokeColor(color);
   dc.setLineWidth(width);
-  for (let d = 0; d < len; d += dash + gap) {
-    const end = Math.min(d + dash, len);
-    const path = new Path();
-    path.move(new Point(x1 + ux * d, y1 + uy * d));
-    path.addLine(new Point(x1 + ux * end, y1 + uy * end));
-    dc.addPath(path);
-    dc.strokePath();
+  // How far past the last dash start the previous segment ended.
+  let carry = 0;
+  for (let i = 1; i < points.length; i++) {
+    const [x1, y1] = points[i - 1];
+    const [x2, y2] = points[i];
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    if (len < 0.01) continue;
+    const ux = (x2 - x1) / len;
+    const uy = (y2 - y1) / len;
+    for (let d = -carry; d < len; d += dash + gap) {
+      const from = Math.max(0, d);
+      const to = Math.min(d + dash, len);
+      if (to <= from) continue;
+      const path = new Path();
+      path.move(new Point(x1 + ux * from, y1 + uy * from));
+      path.addLine(new Point(x1 + ux * to, y1 + uy * to));
+      dc.addPath(path);
+      dc.strokePath();
+    }
+    carry = (carry + len) % (dash + gap);
   }
+}
+
+/** A straight dashed rule, dashed in proportion to its own length. */
+function dashedLine(dc, x1, y1, x2, y2, color, width) {
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  if (len < 0.5) return;
+  dashedPath(dc, [[x1, y1], [x2, y2]], color, width, Math.max(4, len / 26));
 }
 
 /** A legend chip, matched to a band's colour. */

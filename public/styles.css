@@ -533,6 +533,9 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .chart-cliff-label { font-family: var(--mono); font-size: calc(11px * var(--chart-k, 1)); fill: var(--gain); }
 /* Everything right of today is an extrapolation. One scrim says so across all
    the bands at once. */
+/* Spending exactly on pace. Bright enough to read over dense stacked bands,
+   and dashed like the other reference rules — it is a target, not a reading. */
+.chart-pace { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0.75; }
 .chart-projected { fill: var(--paper); opacity: 0.42; }
 .chart-overdrawn { fill: var(--warn); opacity: 0.55; }
 .chart-empty-rule { stroke: var(--warn); stroke-width: 1.5; stroke-dasharray: 4 3; }

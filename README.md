@@ -262,7 +262,9 @@ each point's `v` lines up with it index for index. Bands arrive clamped at
 empty, exactly as the page clamps them — an overspent category has already
 handed its overspend to the cushion, so drawing it negative would count the same
 money twice. What the cushion is overdrawn by rides in `o`, to be drawn below
-the axis.
+the axis, and `c` is that day's pace level — the whole period's money in equal
+daily shares — which the widget draws as the same reference line the page
+draws.
 
 `today` is the **phone's** local date. The server is very likely on UTC, and a
 UTC reading dates evening spending a day forward, which would step the widget's

@@ -28,6 +28,8 @@
 
 // --- configuration ----------------------------------------------------------
 
+// Your own host. A tailnet name identifies your machine, so it stays out of the
+// repository — fill this in on the phone, where the script actually lives.
 const BASE = 'https://YOUR-HOST.ts.net/finances/';
 const VIEW = 'assets';
 

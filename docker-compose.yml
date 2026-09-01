@@ -20,7 +20,9 @@ services:
       # public/ is picked up on a browser refresh; server.js needs
       # `docker compose restart finances`. Drop these two for a sealed image.
       - ./server.js:/app/server.js:ro
+      - ./lib:/app/lib:ro
       - ./public:/app/public:ro
+      - ./example:/app/example:ro
 
     # FRED_API_KEY for the Mortgage tab's live rate. Optional.
     env_file:

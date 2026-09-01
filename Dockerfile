@@ -4,7 +4,10 @@ FROM node:22-alpine
 
 WORKDIR /app
 COPY server.js ./
+COPY lib ./lib
 COPY public ./public
+# Stub data, used only to seed a store that is completely empty.
+COPY example ./example
 
 # State lives on a mounted volume, not in the image. It must be a directory:
 # saves write a temp file and rename over the target, which fails against a

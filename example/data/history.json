@@ -1,0 +1,323 @@
+{
+  "version": 1,
+  "snapshots": [
+    {
+      "date": "2023-03-31",
+      "balances": {
+        "emergency": 7200,
+        "buffer": 3000,
+        "sinking": 0,
+        "longterm": 9000,
+        "equity": 0,
+        "k401": 36000,
+        "roth": 12000,
+        "etrade-self": 3000,
+        "etrade-robo": 3000,
+        "robinhood": 600,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2023-06-30",
+      "balances": {
+        "emergency": 7524,
+        "buffer": 3135,
+        "sinking": 0,
+        "longterm": 9405,
+        "equity": 0,
+        "k401": 37620,
+        "roth": 12540,
+        "etrade-self": 3135,
+        "etrade-robo": 3135,
+        "robinhood": 627,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2023-09-30",
+      "balances": {
+        "emergency": 7848,
+        "buffer": 3270,
+        "sinking": 0,
+        "longterm": 9810,
+        "equity": 0,
+        "k401": 39240,
+        "roth": 13080,
+        "etrade-self": 3270,
+        "etrade-robo": 3270,
+        "robinhood": 654,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2023-12-31",
+      "balances": {
+        "emergency": 8172,
+        "buffer": 3405,
+        "sinking": 0,
+        "longterm": 10215,
+        "equity": 0,
+        "k401": 40860,
+        "roth": 13620,
+        "etrade-self": 3405,
+        "etrade-robo": 3405,
+        "robinhood": 681,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2024-03-31",
+      "balances": {
+        "emergency": 8496,
+        "buffer": 3540,
+        "sinking": 0,
+        "longterm": 10620,
+        "equity": 0,
+        "k401": 42480,
+        "roth": 14160,
+        "etrade-self": 3540,
+        "etrade-robo": 3540,
+        "robinhood": 708,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2024-06-30",
+      "balances": {
+        "emergency": 8820,
+        "buffer": 3675,
+        "sinking": 0,
+        "longterm": 11025,
+        "equity": 0,
+        "k401": 44100,
+        "roth": 14700,
+        "etrade-self": 3675,
+        "etrade-robo": 3675,
+        "robinhood": 735,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2024-09-30",
+      "balances": {
+        "emergency": 9144,
+        "buffer": 3810,
+        "sinking": 0,
+        "longterm": 11430,
+        "equity": 0,
+        "k401": 45720,
+        "roth": 15240,
+        "etrade-self": 3810,
+        "etrade-robo": 3810,
+        "robinhood": 762,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2024-12-31",
+      "balances": {
+        "emergency": 9468,
+        "buffer": 3945,
+        "sinking": 0,
+        "longterm": 11835,
+        "equity": 0,
+        "k401": 47340,
+        "roth": 15780,
+        "etrade-self": 3945,
+        "etrade-robo": 3945,
+        "robinhood": 789,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2025-03-31",
+      "balances": {
+        "emergency": 9792,
+        "buffer": 4080,
+        "sinking": 0,
+        "longterm": 12240,
+        "equity": 0,
+        "k401": 48960,
+        "roth": 16320,
+        "etrade-self": 4080,
+        "etrade-robo": 4080,
+        "robinhood": 816,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2025-06-30",
+      "balances": {
+        "emergency": 10116,
+        "buffer": 4215,
+        "sinking": 0,
+        "longterm": 12645,
+        "equity": 0,
+        "k401": 50580,
+        "roth": 16860,
+        "etrade-self": 4215,
+        "etrade-robo": 4215,
+        "robinhood": 843,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2025-09-30",
+      "balances": {
+        "emergency": 10440,
+        "buffer": 4350,
+        "sinking": 0,
+        "longterm": 13050,
+        "equity": 0,
+        "k401": 52200,
+        "roth": 17400,
+        "etrade-self": 4350,
+        "etrade-robo": 4350,
+        "robinhood": 870,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    },
+    {
+      "date": "2025-12-31",
+      "balances": {
+        "emergency": 10764,
+        "buffer": 4485,
+        "sinking": 0,
+        "longterm": 13455,
+        "equity": 0,
+        "k401": 53820,
+        "roth": 17940,
+        "etrade-self": 4485,
+        "etrade-robo": 4485,
+        "robinhood": 897,
+        "other": 0
+      },
+      "buckets": {
+        "sf-car-tabs": 0,
+        "sf-plex": 0,
+        "sf-costco": 0,
+        "sf-1password": 0,
+        "recast": 0,
+        "travel": 0,
+        "fun": 0
+      }
+    }
+  ],
+  "events": [
+    {
+      "date": "2024-06-30",
+      "kind": "transfer",
+      "note": "Moved a windfall into long-term savings",
+      "from": "other",
+      "to": "longterm",
+      "amount": 5000
+    },
+    {
+      "date": "2025-03-31",
+      "kind": "spend",
+      "note": "New roof",
+      "from": "buffer",
+      "to": "",
+      "amount": 3000
+    }
+  ]
+}

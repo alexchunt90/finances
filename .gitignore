@@ -20,3 +20,12 @@ node_modules/
 # container writes it as uid 1000, and git must never own these files —
 # a checkout that the container can write is a checkout git cannot update.
 state/
+
+# Your money. The app writes these; the repo must never carry them, which is
+# what lets this be a public repository. The leading slash matters: it pins
+# each pattern to the root so the stubs in example/ stay tracked.
+#
+# A fresh checkout has neither, and the server seeds both from example/ on
+# first run. Point S3_BUCKET at a bucket to keep them somewhere else entirely.
+/config.json
+/data/

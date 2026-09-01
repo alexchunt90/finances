@@ -9,7 +9,10 @@ browser — so the two can merge later.
 node server.js
 ```
 
-Then open http://127.0.0.1:4174. It also listens on every interface, so it is
+Then open http://127.0.0.1:4174. A fresh checkout carries no financial data at
+all — the first run seeds `config.json` and `data/` from [`example/`](example/),
+which is a made-up household with round numbers. Edit it, or replace it with
+your own; either way it is git-ignored and stays on your machine. It also listens on every interface, so it is
 reachable from a phone on the same network, or from anywhere over a Tailscale /
 WireGuard link — the startup banner prints the addresses.
 
@@ -142,13 +145,68 @@ shades stack from the bottom for illiquid accounts, warm shades above them for
 liquid ones, each assigned in order. Add entries if you add accounts — the
 palettes wrap rather than running out.
 
+## Where the state lives
+
+Four documents: `config.json`, and `periods.json`, `history.json` and
+`amortization.json` under `data/`. None of them is in this repository — that is
+what lets it be public.
+
+By default they are files under `STATE_DIR`, which is the project directory. Set
+`S3_BUCKET` and they move to a bucket instead, which is what lets several
+instances — a server, a laptop, a second box — share one source of truth:
+
+```bash
+S3_BUCKET=my-finances
+S3_PREFIX=finances
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+Anything speaking the S3 API works. Set `S3_ENDPOINT` and requests go path-style
+to that host instead of to AWS, which is what Cloudflare R2 and MinIO want.
+
+Moving existing state into a bucket is a copy:
+
+```bash
+aws s3 cp config.json s3://my-finances/finances/config.json
+aws s3 cp data s3://my-finances/finances/data --recursive
+```
+
+A bucket the app finds completely empty gets seeded from `example/` on first
+start, so pointing at a new bucket gives you a working app rather than an error.
+Copy your own state in first and the seed never fires.
+
+**Keep the bucket private.** It holds every figure in the app and there is no
+authentication in front of it, or in front of the app.
+
+### Two instances, one bucket
+
+`config.json` and each period carry a `version` that increments on every write,
+and a client echoes back the version it loaded. That catches a **stale client** —
+a tab that has been open since before someone else saved.
+
+It does not catch two *servers*. Both could read v5, both write v6, and one
+edit disappears with nothing to show for it. So every write is also conditional
+on the stored copy not having moved since it was read: on S3 that is a
+conditional `PUT` against the object's ETag, and on the filesystem it is a hash
+check under a lock. An instance that loses the race re-reads and re-applies its
+change to what is actually there now, up to eight times before giving up and
+returning **409**.
+
+The two failures are deliberately different. Two people saving different things
+at the same moment is nobody's mistake and just works. A stale tab trying to
+overwrite an edit it never saw is reported, the browser reloads, and it says the
+unsaved edit was dropped — losing one edit beats silently losing someone else's.
+
 ## Running on a server
 
-`STATE_DIR` points at the writable state — `config.json` plus `data/`. It
-defaults to the project directory, so a checkout needs no configuration. In a
-container it must be a **mounted directory, not a mounted file**: saves write a
-temp file and rename over the target, and rename fails against a bind-mounted
-file.
+`STATE_DIR` points at the writable state — `config.json` plus `data/` — when it
+is kept in files. It defaults to the project directory, so a checkout needs no
+configuration. In a container it must be a **mounted directory, not a mounted
+file**: saves write a temp file and rename over the target, and rename fails
+against a bind-mounted file. Set `S3_BUCKET` and `STATE_DIR` is ignored
+entirely; see [Where the state lives](#where-the-state-lives).
 
 ```bash
 mkdir -p state/data
@@ -298,19 +356,14 @@ alone, since nine bands in 155 points is a smear, and large adds a legend.
 | `public/paydates.js` | Federal holidays and the 10th/25th rule |
 | `public/model.js` | All arithmetic, no DOM |
 | `public/app.js` | Views and charts |
+| `lib/store.js` | State on disk or in a bucket, and the conditional writes |
+| `example/` | Stub data, seeded into an empty store on first run |
 | `scriptable/burndown-widget.js` | The iPhone home-screen widget |
 
-Writes go through a temp file and a rename, and periods are upserted by id, so a
-bug in the open period cannot take closed history with it. Closed periods refuse
-to be overwritten.
-
-`config.json` and each period carry a `version` that increments on every write.
-A client echoes back the version it loaded; if the file has moved on since, the
-server returns **409** with the current state rather than letting a stale tab
-overwrite whoever wrote first. The browser reports the conflict, reloads from
-disk, and tells you the unsaved edit was dropped — losing one edit is better than
-silently losing someone else's. This is what makes it safe to open the app on
-more than one device.
+Periods are upserted by id, so a bug in the open period cannot take closed
+history with it, and closed periods refuse to be overwritten. What keeps two
+writers from losing each other's edits is in
+[Two instances, one bucket](#two-instances-one-bucket).
 
 ## Mortgage
 

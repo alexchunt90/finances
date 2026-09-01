@@ -1,0 +1,91 @@
+[
+  {
+    "id": "2026-01-12",
+    "start": "2026-01-12",
+    "scheduledEnd": "2026-01-26",
+    "status": "closed",
+    "closedOn": "2026-01-26",
+    "takeHome": 4000,
+    "spending": [
+      {
+        "id": "ex000001",
+        "date": "2026-01-13",
+        "targetId": "groceries",
+        "amount": 92.4,
+        "note": "weekly shop"
+      },
+      {
+        "id": "ex000002",
+        "date": "2026-01-16",
+        "targetId": "takeout",
+        "amount": 34.5,
+        "note": "friday pizza"
+      },
+      {
+        "id": "ex000003",
+        "date": "2026-01-19",
+        "targetId": "fuel",
+        "amount": 48.2,
+        "note": ""
+      },
+      {
+        "id": "ex000004",
+        "date": "2026-01-22",
+        "targetId": "groceries",
+        "amount": 76.15,
+        "note": ""
+      }
+    ],
+    "oneOffs": [
+      {
+        "id": "ex000005",
+        "date": "2026-01-20",
+        "amount": 120,
+        "note": "vet visit"
+      }
+    ],
+    "flows": [],
+    "balances": {
+      "emergency": 20000,
+      "buffer": 5000,
+      "sinking": 0,
+      "longterm": 15000,
+      "equity": 0,
+      "k401": 60000,
+      "roth": 20000,
+      "etrade-self": 5000,
+      "etrade-robo": 5000,
+      "robinhood": 1000,
+      "other": 0
+    },
+    "version": 1
+  },
+  {
+    "id": "2026-01-26",
+    "start": "2026-01-26",
+    "scheduledEnd": "2026-02-10",
+    "status": "open",
+    "closedOn": null,
+    "takeHome": 4000,
+    "spending": [
+      {
+        "id": "ex000006",
+        "date": "2026-01-27",
+        "targetId": "groceries",
+        "amount": 84.3,
+        "note": "weekly shop"
+      },
+      {
+        "id": "ex000007",
+        "date": "2026-01-29",
+        "targetId": "entertainment",
+        "amount": 22,
+        "note": "cinema"
+      }
+    ],
+    "oneOffs": [],
+    "flows": [],
+    "balances": {},
+    "version": 1
+  }
+]

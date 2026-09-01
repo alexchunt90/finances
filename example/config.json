@@ -1,0 +1,597 @@
+{
+  "version": 1,
+  "paySchedule": {
+    "daysOfMonth": [
+      10,
+      25
+    ],
+    "periodsPerYear": 24,
+    "_comment": "Pay date is the first business day at or before the 10th/25th. The bank makes the deposit available on the first business day BEFORE that pay date. Verified against Aug 10 2026 (Mon) paying out Fri Aug 7."
+  },
+  "income": {
+    "takeHomePerPeriod": 4000,
+    "preTax": {
+      "retirement401kMonthly": 0,
+      "_comment": "Expected pre-tax 401k contribution per month. Never enters the waterfall - it is withheld before the deposit. Update when comp or withholding percentage changes.",
+      "retirement401kPerPeriod": 500
+    }
+  },
+  "expenses": {
+    "_comment": "All amounts are per pay period (24 per year) except targets, which are monthly and get prorated by the actual length of each period.",
+    "committed": [
+      {
+        "id": "mortgage",
+        "name": "Mortgage w/ Escrow",
+        "perPeriod": 600,
+        "category": "Housing",
+        "necessary": true
+      },
+      {
+        "id": "daycare",
+        "name": "Daycare",
+        "perPeriod": 450,
+        "category": "Childcare",
+        "necessary": true
+      },
+      {
+        "id": "cash",
+        "name": "Cash Spending",
+        "perPeriod": 120,
+        "category": "Cash",
+        "necessary": false
+      },
+      {
+        "id": "swim",
+        "name": "Goldfish Swim School",
+        "perPeriod": 95,
+        "category": "Service",
+        "necessary": false
+      },
+      {
+        "id": "car-ins",
+        "name": "Car Insurance",
+        "perPeriod": 80,
+        "category": "Insurance",
+        "necessary": true
+      },
+      {
+        "id": "sewage",
+        "name": "Sewage",
+        "perPeriod": 75,
+        "category": "Utilities",
+        "necessary": true
+      },
+      {
+        "id": "electric",
+        "name": "Electric",
+        "perPeriod": 60,
+        "category": "Utilities",
+        "necessary": true
+      },
+      {
+        "id": "internet",
+        "name": "Internet",
+        "perPeriod": 55,
+        "category": "Utilities",
+        "necessary": true
+      },
+      {
+        "id": "water",
+        "name": "Water",
+        "perPeriod": 50,
+        "category": "Utilities",
+        "necessary": true
+      },
+      {
+        "id": "gas-util",
+        "name": "Gas",
+        "perPeriod": 45,
+        "category": "Utilities",
+        "necessary": true
+      },
+      {
+        "id": "trash",
+        "name": "Trash",
+        "perPeriod": 40,
+        "category": "Utilities",
+        "necessary": true
+      },
+      {
+        "id": "digitalocean",
+        "name": "DigitalOcean",
+        "perPeriod": 35,
+        "category": "Service",
+        "necessary": false
+      },
+      {
+        "id": "claude",
+        "name": "Claude",
+        "perPeriod": 30,
+        "category": "Service",
+        "necessary": false
+      },
+      {
+        "id": "patreon",
+        "name": "Patreon",
+        "perPeriod": 28,
+        "category": "Media",
+        "necessary": false
+      },
+      {
+        "id": "aws",
+        "name": "AWS",
+        "perPeriod": 25,
+        "category": "Service",
+        "necessary": false
+      },
+      {
+        "id": "ci",
+        "name": "Children International",
+        "perPeriod": 22,
+        "category": "Charity",
+        "necessary": false
+      },
+      {
+        "id": "desc",
+        "name": "DESC",
+        "perPeriod": 20,
+        "category": "Charity",
+        "necessary": false
+      },
+      {
+        "id": "msf",
+        "name": "MSF",
+        "perPeriod": 18,
+        "category": "Charity",
+        "necessary": false
+      },
+      {
+        "id": "familyworks",
+        "name": "FamilyWorks",
+        "perPeriod": 15,
+        "category": "Charity",
+        "necessary": false
+      },
+      {
+        "id": "workingwa",
+        "name": "WorkingWashington",
+        "perPeriod": 12,
+        "category": "Charity",
+        "necessary": false
+      },
+      {
+        "id": "dsa",
+        "name": "DSA",
+        "perPeriod": 10,
+        "category": "Charity",
+        "necessary": false
+      },
+      {
+        "id": "aspca",
+        "name": "ASPCA",
+        "perPeriod": 10,
+        "category": "Charity",
+        "necessary": false
+      },
+      {
+        "id": "propublica",
+        "name": "ProPublica",
+        "perPeriod": 8,
+        "category": "Charity",
+        "necessary": false
+      },
+      {
+        "id": "salvation",
+        "name": "Salvation Army",
+        "perPeriod": 5,
+        "category": "Charity",
+        "necessary": false
+      }
+    ],
+    "sinking": [
+      {
+        "id": "car-tabs",
+        "name": "Car Tabs + Discover Pass",
+        "perPeriod": 40,
+        "annualAmount": 960,
+        "dueMonth": 7,
+        "dueDay": 26,
+        "bucketId": "sf-car-tabs",
+        "category": "Utilities",
+        "necessary": true
+      },
+      {
+        "id": "plex",
+        "name": "Plex Pass",
+        "perPeriod": 25,
+        "annualAmount": 600,
+        "dueMonth": 8,
+        "dueDay": 27,
+        "bucketId": "sf-plex",
+        "category": "Service",
+        "necessary": false
+      },
+      {
+        "id": "costco",
+        "name": "Costco",
+        "perPeriod": 15,
+        "annualAmount": 360,
+        "dueMonth": 12,
+        "dueDay": 1,
+        "bucketId": "sf-costco",
+        "category": "Service",
+        "necessary": false
+      },
+      {
+        "id": "1password",
+        "name": "1Password",
+        "perPeriod": 10,
+        "annualAmount": 240,
+        "dueMonth": 1,
+        "dueDay": 2,
+        "bucketId": "sf-1password",
+        "category": "Service",
+        "necessary": true
+      }
+    ],
+    "targets": [
+      {
+        "id": "groceries",
+        "name": "Groceries",
+        "monthly": 500,
+        "category": "Food",
+        "necessary": true
+      },
+      {
+        "id": "takeout",
+        "name": "Takeout",
+        "monthly": 200,
+        "category": "Food",
+        "necessary": false
+      },
+      {
+        "id": "homeimp",
+        "name": "Home Improvement",
+        "monthly": 100,
+        "category": "Housing",
+        "necessary": false
+      },
+      {
+        "id": "fuel",
+        "name": "Gas",
+        "monthly": 100,
+        "category": "Transport",
+        "necessary": true
+      },
+      {
+        "id": "alcohol",
+        "name": "Alcohol",
+        "monthly": 50,
+        "category": "Recreation",
+        "necessary": true
+      },
+      {
+        "id": "entertainment",
+        "name": "Entertainment",
+        "monthly": 50,
+        "category": "Recreation",
+        "necessary": true
+      },
+      {
+        "id": "shopping",
+        "name": "Shopping",
+        "monthly": 50,
+        "category": "Shopping",
+        "necessary": true
+      },
+      {
+        "id": "other",
+        "name": "Other",
+        "monthly": 0,
+        "category": "Other",
+        "necessary": false,
+        "_comment": "Unbudgeted in-period spending. A zero budget means anything logged here is overage, so it draws straight from Left to spend."
+      }
+    ]
+  },
+  "accounts": [
+    {
+      "id": "emergency",
+      "name": "Emergency Fund",
+      "tier": "emergency",
+      "volatile": false,
+      "liquid": true,
+      "target": 20000
+    },
+    {
+      "id": "buffer",
+      "name": "Buffer Savings",
+      "tier": "buffer",
+      "volatile": false,
+      "liquid": true,
+      "target": 5000
+    },
+    {
+      "id": "sinking",
+      "name": "Sinking Funds",
+      "tier": "sinking",
+      "volatile": false,
+      "liquid": true
+    },
+    {
+      "id": "longterm",
+      "name": "Long-term Savings",
+      "tier": "longterm",
+      "volatile": false,
+      "liquid": true
+    },
+    {
+      "id": "equity",
+      "name": "Vested Company Equity",
+      "tier": "equity",
+      "volatile": false,
+      "liquid": false
+    },
+    {
+      "id": "k401",
+      "name": "401(k)",
+      "tier": "retirement",
+      "volatile": true,
+      "liquid": false
+    },
+    {
+      "id": "roth",
+      "name": "Roth IRA",
+      "tier": "retirement",
+      "volatile": true,
+      "liquid": false
+    },
+    {
+      "id": "etrade-self",
+      "name": "E*Trade (self-managed)",
+      "tier": "brokerage",
+      "volatile": true,
+      "liquid": true
+    },
+    {
+      "id": "etrade-robo",
+      "name": "E*Trade (robo-managed)",
+      "tier": "brokerage",
+      "volatile": true,
+      "liquid": true
+    },
+    {
+      "id": "robinhood",
+      "name": "Robinhood",
+      "tier": "brokerage",
+      "volatile": true,
+      "liquid": true
+    },
+    {
+      "id": "other",
+      "name": "Other Savings",
+      "tier": "longterm",
+      "volatile": false,
+      "liquid": true,
+      "retired": true,
+      "_comment": "Folded into the emergency fund on 2026-03-08. Kept so historical totals still reconcile; excluded from balance entry."
+    }
+  ],
+  "buckets": [
+    {
+      "id": "sf-car-tabs",
+      "accountId": "sinking",
+      "name": "Car Tabs + Discover Pass",
+      "kind": "sinking",
+      "opening": 0
+    },
+    {
+      "id": "sf-plex",
+      "accountId": "sinking",
+      "name": "Plex Pass",
+      "kind": "sinking",
+      "opening": 0
+    },
+    {
+      "id": "sf-costco",
+      "accountId": "sinking",
+      "name": "Costco",
+      "kind": "sinking",
+      "opening": 0
+    },
+    {
+      "id": "sf-1password",
+      "accountId": "sinking",
+      "name": "1Password",
+      "kind": "sinking",
+      "opening": 0
+    },
+    {
+      "id": "recast",
+      "accountId": "longterm",
+      "name": "Mortgage Recast",
+      "kind": "goal",
+      "target": 0,
+      "opening": 0
+    },
+    {
+      "id": "travel",
+      "accountId": "longterm",
+      "name": "Travel",
+      "kind": "goal",
+      "target": 0,
+      "opening": 0
+    },
+    {
+      "id": "fun",
+      "accountId": "longterm",
+      "name": "Personal / Fun",
+      "kind": "goal",
+      "target": 0,
+      "opening": 0
+    }
+  ],
+  "waterfall": {
+    "_comment": "Order money leaves take-home each period. Sinking funds are never reduced - halving them means the annual bill is unfunded when it lands.",
+    "emergencyPerPeriod": 0,
+    "bufferPerPeriod": 100,
+    "rothPerPeriod": 250,
+    "longtermSplit": [
+      {
+        "bucketId": "recast",
+        "perPeriod": 150
+      },
+      {
+        "bucketId": "travel",
+        "perPeriod": 100
+      },
+      {
+        "bucketId": "fun",
+        "perPeriod": 50
+      }
+    ],
+    "_longtermComment": "Dollars per period per goal. The Long-term savings tier is their sum, so the parent always adds up.",
+    "brokerageSplit": [
+      {
+        "accountId": "etrade-robo",
+        "perPeriod": 100
+      },
+      {
+        "accountId": "robinhood",
+        "perPeriod": 50
+      }
+    ],
+    "_brokerageComment": "Dollars, not percentages: these are two separate transfers to two institutions, so the figures should match what the bank actually moves. The Brokerage tier total is their sum.",
+    "sinkingTransferActual": 90,
+    "_transferComment": "What the standing bank transfer actually moves, so the app can flag drift from the computed figure."
+  },
+  "rules": {
+    "recoveryReductionPct": 50,
+    "recoveryExempt": [
+      "sinking"
+    ],
+    "surplusSweepOrder": [
+      "emergency",
+      "buffer",
+      "bucket:recast"
+    ],
+    "expectedOneOffPerPeriod": 150,
+    "trajectoryPeriods": 12,
+    "trailingPeriodsForAverage": 6
+  },
+  "openingBalances": {
+    "_asOf": "2026-01-01",
+    "_comment": "Made-up starting balances. Replace with your own — see the README.",
+    "emergency": 20000,
+    "buffer": 5000,
+    "sinking": 0,
+    "longterm": 15000,
+    "equity": 0,
+    "k401": 60000,
+    "roth": 20000,
+    "etrade-self": 5000,
+    "etrade-robo": 5000,
+    "robinhood": 1000,
+    "other": 0
+  },
+  "theme": {
+    "accent": "#D4AF37",
+    "coolPalette": [
+      "#1F3D5C",
+      "#2F6285",
+      "#4A93A6"
+    ],
+    "warmPalette": [
+      "#6E3410",
+      "#8F4A15",
+      "#AC601A",
+      "#C67C1F",
+      "#B99433",
+      "#D4AF37",
+      "#E4C86A",
+      "#F1E0A8"
+    ],
+    "_paletteComment": "Composition chart. Cool shades for illiquid accounts, warm shades for liquid ones, each assigned in order.",
+    "_comment": "Headline and chart colour. Any hex value works - the app derives a translucent wash and a dim variant from it at load. Backgrounds stay black and near-black; body text stays white."
+  },
+  "sources": {
+    "mortgage.refinance.baseRate": {
+      "provider": "fred",
+      "series": "MORTGAGE30US",
+      "apiKeyEnv": "FRED_API_KEY",
+      "add": 0,
+      "_comment": "Set provider to \"fred\" and put FRED_API_KEY in .env to pull the Freddie Mac weekly average. Use \"add\" for the spread your lender quotes over it."
+    },
+    "mortgage.property.homeValue": {
+      "provider": "manual",
+      "url": "",
+      "path": "",
+      "headersEnv": "HOME_VALUE_HEADERS",
+      "label": "",
+      "_comment": "Change provider to \"http\" with a url and dot path, or \"file\" to read a JSON file some other script keeps updated."
+    }
+  },
+  "mortgage": {
+    "_comment": "Ported from refi_calc. Principal, interest and mortgage insurance only - taxes and homeowners insurance are excluded because they do not change when you refinance.",
+    "property": {
+      "homeValue": 400000
+    },
+    "currentLoan": {
+      "balance": 300000,
+      "rate": 6,
+      "monthsRemaining": 300,
+      "paymentOverride": 0,
+      "pmiAnnualRate": 0,
+      "recastFee": 350
+    },
+    "refinance": {
+      "baseRate": 6.66,
+      "termYears": 20,
+      "closingCosts": 6500,
+      "rollClosingCosts": true,
+      "pmiAnnualRate": 0.55
+    },
+    "horizonYears": 25,
+    "hideCliffsBelowLtv": 55,
+    "recastStepDown": 500,
+    "_recastComment": "The Jump to shortcut solves for the balance whose recast payment is this much below what you pay today.",
+    "_cliffsComment": "Below this loan-to-value the tier table is hidden - every tier is already cleared, so there is no cliff left to aim at.",
+    "ltvTiers": [
+      {
+        "maxLtv": 60,
+        "rateAdjustment": -0.25
+      },
+      {
+        "maxLtv": 70,
+        "rateAdjustment": -0.125
+      },
+      {
+        "maxLtv": 75,
+        "rateAdjustment": -0.05
+      },
+      {
+        "maxLtv": 80,
+        "rateAdjustment": 0
+      },
+      {
+        "maxLtv": 85,
+        "rateAdjustment": 0.25
+      },
+      {
+        "maxLtv": 90,
+        "rateAdjustment": 0.375
+      },
+      {
+        "maxLtv": 95,
+        "rateAdjustment": 0.5
+      },
+      {
+        "maxLtv": 97,
+        "rateAdjustment": 0.75
+      }
+    ]
+  },
+  "projections": {
+    "annualReturnPct": 7
+  }
+}

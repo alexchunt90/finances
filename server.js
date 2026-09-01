@@ -27,6 +27,7 @@ const path = require('node:path');
 global.PayDates = require('./public/paydates.js');
 const Model = require('./public/model.js');
 const PayDates = global.PayDates;
+const { createStore, StoreConflict, KEYS: STORE_KEYS } = require('./lib/store.js');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -61,16 +62,12 @@ function loadEnv(file) {
 
 loadEnv(ENV_PATH);
 
-// Where the writable state lives. Defaults to the project directory, which is
-// the layout when running from a checkout. Point STATE_DIR at a mounted volume
-// to run in a container — note that writes go through a temp file and a rename,
-// which fails against a bind-mounted *file*, so this must be a directory.
+// Where the writable state lives when it lives on this machine. Defaults to the
+// project directory, which is the layout when running from a checkout. Point
+// STATE_DIR at a mounted volume to run in a container — note that writes go
+// through a temp file and a rename, which fails against a bind-mounted *file*,
+// so this must be a directory. Ignored entirely when S3_BUCKET names a bucket.
 const STATE_DIR = process.env.STATE_DIR ? path.resolve(process.env.STATE_DIR) : ROOT;
-const CONFIG_PATH = path.join(STATE_DIR, 'config.json');
-const DATA_DIR = path.join(STATE_DIR, 'data');
-const PERIODS_PATH = path.join(DATA_DIR, 'periods.json');
-const HISTORY_PATH = path.join(DATA_DIR, 'history.json');
-const AMORTIZATION_PATH = path.join(DATA_DIR, 'amortization.json');
 
 const PORT = Number(process.env.PORT || 4174);
 
@@ -90,35 +87,58 @@ const MIME = {
 };
 
 // --- storage ----------------------------------------------------------------
+//
+// Everything goes through lib/store.js, which is either the local filesystem or
+// an S3-compatible bucket depending on the environment. The bucket is what lets
+// several instances share one source of truth; see mutate() for what keeps them
+// from overwriting each other.
 
-/**
- * Write via a sibling temp file and rename. On the same filesystem the rename
- * is atomic, so an interrupted save leaves the previous file intact rather than
- * a half-written one. Losing a period of history to a truncated write would be
- * unrecoverable by hand.
- */
-async function writeJsonAtomic(file, value) {
-  const tmp = `${file}.${process.pid}.tmp`;
-  await fsp.writeFile(tmp, JSON.stringify(value, null, 2) + '\n', 'utf8');
-  await fsp.rename(tmp, file);
+const store = createStore(process.env, STATE_DIR);
+
+async function readValue(key, fallback) {
+  const { value } = await store.read(key);
+  return value === undefined ? fallback : value;
 }
 
-async function readJson(file, fallback) {
-  try {
-    return JSON.parse(await fsp.readFile(file, 'utf8'));
-  } catch (err) {
-    if (err.code === 'ENOENT' && fallback !== undefined) return fallback;
-    throw err;
-  }
-}
-
-const readConfig = () => readJson(CONFIG_PATH);
-const readPeriods = () => readJson(PERIODS_PATH, []);
+const readConfig = () => readValue('config');
+const readPeriods = () => readValue('periods', []);
 // Balance snapshots predating the app. Read-only; edited by hand or by import.
-const readHistory = () => readJson(HISTORY_PATH, { snapshots: [], events: [] });
+const readHistory = () => readValue('history', { snapshots: [], events: [] });
 // The servicer's amortization schedule, converted from their PDF once. Read
 // only — the schedule is a fact about the loan, not state the app edits.
-const readAmortization = () => readJson(AMORTIZATION_PATH, { payments: [] });
+const readAmortization = () => readValue('amortization', { payments: [] });
+
+/**
+ * Read, change, write — retrying when another instance writes in between.
+ *
+ * `change` runs again on a fresh read each time, so a retry re-applies the
+ * change to what is there now rather than to the copy it started from. That
+ * distinction is the whole point: two instances saving different things at the
+ * same moment is nobody's mistake and should just work, while a stale tab
+ * trying to overwrite an edit it never saw has to be reported. The first is a
+ * retry, the second is `{ reject }`.
+ *
+ * `change` must build a fresh value rather than mutating what it was handed,
+ * or a retry compounds the previous attempt's edits on top of the new read.
+ */
+async function mutate(key, fallback, change, attempts = 8) {
+  for (let attempt = 1; ; attempt++) {
+    const { value, token } = await store.read(key);
+    const outcome = await change(value === undefined ? fallback : value);
+    if (outcome.reject) return outcome;
+    try {
+      await store.write(key, outcome.value, token);
+      return outcome;
+    } catch (err) {
+      // Out of attempts, or a real failure. A caller that keeps losing the race
+      // is better off being told than looping forever.
+      if (!(err instanceof StoreConflict) || attempt >= attempts) throw err;
+      // Jittered, so that writers who collided once do not line up and collide
+      // again on the retry.
+      await new Promise((r) => setTimeout(r, attempt * 10 + Math.random() * 20));
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Outside parameter sources, carried over from refi_calc.
@@ -460,26 +480,26 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/config' && req.method === 'PUT') {
       const incoming = JSON.parse(await readBody(req) || '{}');
-      const current = await readConfig();
 
       // Optimistic concurrency. The client echoes back the version it loaded;
-      // if the file has moved on since, another writer got there first and this
-      // request would silently overwrite them. Reject instead, and hand back
-      // the current state so the client can reload rather than guess.
-      const held = Number(current.version) || 0;
-      const sent = Number(incoming.version) || 0;
-      if (sent !== held) {
-        return json(res, 409, {
-          error: `config was changed elsewhere (you have v${sent}, the file is v${held})`,
-          version: held,
-          config: current,
-        });
-      }
-
-      // `sources` is hand-edited in the file, not through the UI.
-      const merged = { ...current, ...incoming, sources: current.sources, version: held + 1 };
-      await writeJsonAtomic(CONFIG_PATH, merged);
-      return json(res, 200, { saved: true, version: merged.version });
+      // if the stored copy has moved on since, another writer got there first
+      // and this request would silently overwrite them. Reject instead, and
+      // hand back the current state so the client can reload rather than guess.
+      const out = await mutate('config', undefined, (current) => {
+        const held = Number(current.version) || 0;
+        const sent = Number(incoming.version) || 0;
+        if (sent !== held) {
+          return { reject: {
+            error: `config was changed elsewhere (you have v${sent}, the stored copy is v${held})`,
+            version: held,
+            config: current,
+          } };
+        }
+        // `sources` is hand-edited in the file, not through the UI.
+        return { value: { ...current, ...incoming, sources: current.sources, version: held + 1 } };
+      });
+      if (out.reject) return json(res, 409, out.reject);
+      return json(res, 200, { saved: true, version: out.value.version });
     }
 
     // Events are annotations on the history — a vest liquidated, a down payment
@@ -489,22 +509,21 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/history/events' && req.method === 'PUT') {
       const incoming = JSON.parse(await readBody(req) || '{}');
       if (!Array.isArray(incoming.events)) return json(res, 400, { error: 'events must be an array' });
-      const current = await readHistory();
 
-      const held = Number(current.version) || 0;
-      const sent = Number(incoming.version) || 0;
-      if (sent !== held) {
-        return json(res, 409, {
-          error: `history was changed elsewhere (you have v${sent}, the file is v${held})`,
-          version: held,
-          history: current,
-        });
-      }
-
-      const merged = { ...current, events: incoming.events, version: held + 1 };
-      await fsp.mkdir(DATA_DIR, { recursive: true });
-      await writeJsonAtomic(HISTORY_PATH, merged);
-      return json(res, 200, { saved: true, version: merged.version });
+      const out = await mutate('history', { snapshots: [], events: [] }, (current) => {
+        const held = Number(current.version) || 0;
+        const sent = Number(incoming.version) || 0;
+        if (sent !== held) {
+          return { reject: {
+            error: `history was changed elsewhere (you have v${sent}, the stored copy is v${held})`,
+            version: held,
+            history: current,
+          } };
+        }
+        return { value: { ...current, events: incoming.events, version: held + 1 } };
+      });
+      if (out.reject) return json(res, 409, out.reject);
+      return json(res, 200, { saved: true, version: out.value.version });
     }
 
     // Upsert one period. The browser owns period identity and all arithmetic.
@@ -514,36 +533,38 @@ const server = http.createServer(async (req, res) => {
       const incoming = JSON.parse(await readBody(req) || '{}');
       if (incoming.id !== id) return json(res, 400, { error: 'id mismatch' });
 
-      const periods = await readPeriods();
-      const existing = periods.findIndex((p) => p.id === id);
-      const stored = existing === -1 ? null : periods[existing];
+      const out = await mutate('periods', [], (periods) => {
+        const at = periods.findIndex((p) => p.id === id);
+        const stored = at === -1 ? null : periods[at];
 
-      // A closed period is history. Refuse to overwrite one, so a stale tab
-      // cannot silently rewrite totals you already reconciled.
-      if (stored && stored.status === 'closed' && incoming.status !== 'closed') {
-        return json(res, 409, { error: `period ${id} is closed`, period: stored });
-      }
+        // A closed period is history. Refuse to overwrite one, so a stale tab
+        // cannot silently rewrite totals you already reconciled.
+        if (stored && stored.status === 'closed' && incoming.status !== 'closed') {
+          return { reject: { error: `period ${id} is closed`, period: stored } };
+        }
 
-      // The open period gets the same version check as config: two devices
-      // logging spending at once would otherwise clobber each other.
-      const held = stored ? Number(stored.version) || 0 : 0;
-      const sent = Number(incoming.version) || 0;
-      if (stored && sent !== held) {
-        return json(res, 409, {
-          error: `period ${id} was changed elsewhere (you have v${sent}, the file is v${held})`,
-          version: held,
-          period: stored,
-        });
-      }
-      incoming.version = held + 1;
+        // The open period gets the same version check as config: two devices
+        // logging spending at once would otherwise clobber each other.
+        const held = stored ? Number(stored.version) || 0 : 0;
+        const sent = Number(incoming.version) || 0;
+        if (stored && sent !== held) {
+          return { reject: {
+            error: `period ${id} was changed elsewhere (you have v${sent}, the stored copy is v${held})`,
+            version: held,
+            period: stored,
+          } };
+        }
 
-      if (existing === -1) periods.push(incoming);
-      else periods[existing] = incoming;
-
-      periods.sort((a, b) => a.start.localeCompare(b.start));
-      await fsp.mkdir(DATA_DIR, { recursive: true });
-      await writeJsonAtomic(PERIODS_PATH, periods);
-      return json(res, 200, { saved: true, id, version: incoming.version });
+        // A fresh array and a fresh period each time: mutating `incoming` would
+        // bump its version again on every retry.
+        const saved = { ...incoming, version: held + 1 };
+        const next = [...periods];
+        if (at === -1) next.push(saved); else next[at] = saved;
+        next.sort((a, b) => a.start.localeCompare(b.start));
+        return { value: next, version: saved.version };
+      });
+      if (out.reject) return json(res, 409, out.reject);
+      return json(res, 200, { saved: true, id, version: out.version });
     }
 
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'Not found' });
@@ -566,6 +587,11 @@ const server = http.createServer(async (req, res) => {
     return res.end(req.method === 'HEAD' ? undefined : data);
   } catch (err) {
     if (err.code === 'ENOENT') return json(res, 404, { error: 'Not found' });
+    // Lost the race often enough to give up. That is a conflict, not a fault,
+    // and 409 is what the client already knows how to recover from.
+    if (err instanceof StoreConflict) {
+      return json(res, 409, { error: 'the state is being written from somewhere else — reload and try again' });
+    }
     console.error(err);
     return json(res, 500, { error: err.message });
   }
@@ -588,9 +614,79 @@ function readBody(req) {
   });
 }
 
-if (!fs.existsSync(CONFIG_PATH)) {
-  console.error(`config.json not found at ${CONFIG_PATH}`);
-  process.exit(1);
+/**
+ * A store with no config in it gets the example data, so that a fresh checkout
+ * runs with `node server.js` and nothing else. Seeding writes each document
+ * only if it is genuinely absent — the store refuses a create when something is
+ * already there — so pointing at a bucket that already holds real state can
+ * never overwrite it.
+ */
+async function seedIfEmpty() {
+  const { value } = await store.read('config');
+  if (value !== undefined) return false;
+
+  const examples = path.join(ROOT, 'example');
+  for (const [key, rel] of Object.entries(STORE_KEYS)) {
+    const from = path.join(examples, rel);
+    let raw;
+    try {
+      raw = await fsp.readFile(from, 'utf8');
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;
+      throw err;
+    }
+    const parsed = JSON.parse(raw);
+    try {
+      await store.write(key, key === 'periods' ? rebase(parsed) : parsed, null);
+    } catch (err) {
+      // Another instance seeded it a moment ago. Theirs is as good as ours.
+      if (!(err instanceof StoreConflict)) throw err;
+    }
+  }
+  return true;
+}
+
+/**
+ * The example periods are written against a fixed pay calendar. Shift them onto
+ * the live one as they are seeded, so a checkout in any month opens on a period
+ * that is actually running — an example that arrives reading "day 217 of 217,
+ * closing late" teaches a contributor nothing about what the app does.
+ *
+ * The two example periods become the current pay period and the one before it.
+ * Each period's dates move by its own offset rather than a shared one, because
+ * pay periods run 13-19 days and a single shift would not land both on a
+ * boundary.
+ */
+function rebase(periods) {
+  if (periods.length !== 2) return periods;
+  const todayISO = PayDates.todayISO();
+  const current = PayDates.periodContaining(todayISO);
+  const previous = PayDates.periodContaining(
+    PayDates.iso(PayDates.parse(current.start) - PayDates.DAY)
+  );
+
+  const shift = (iso, days) => PayDates.iso(PayDates.parse(iso) + days * PayDates.DAY);
+
+  return periods.map((period, i) => {
+    const onto = i === 0 ? previous : current;
+    const days = PayDates.daysBetween(period.start, onto.start);
+    // Nothing may be logged after the period ends, or — in the open period —
+    // in the future.
+    const last = i === 0 ? onto.scheduledEnd : todayISO;
+    const move = (iso) => {
+      const moved = shift(iso, days);
+      return moved > last ? last : moved < onto.start ? onto.start : moved;
+    };
+    return {
+      ...period,
+      id: onto.start,
+      start: onto.start,
+      scheduledEnd: onto.scheduledEnd,
+      closedOn: period.closedOn ? onto.scheduledEnd : null,
+      spending: (period.spending || []).map((e) => ({ ...e, date: move(e.date) })),
+      oneOffs: (period.oneOffs || []).map((e) => ({ ...e, date: move(e.date) })),
+    };
+  });
 }
 
 /** Every non-internal IPv4 address, so the reachable URLs can be printed. */
@@ -601,14 +697,27 @@ function lanAddresses() {
     .map((n) => n.address);
 }
 
-server.listen(PORT, HOST, () => {
-  console.log(`Finances → http://127.0.0.1:${PORT}`);
-  if (HOST !== '127.0.0.1') {
-    for (const address of lanAddresses()) {
-      console.log(`         → http://${address}:${PORT}`);
-    }
-    console.log('Reachable from other devices on this network. No login — set HOST=127.0.0.1 to restrict.');
+async function start() {
+  let seeded;
+  try {
+    seeded = await seedIfEmpty();
+  } catch (err) {
+    console.error(`Could not reach the state store at ${store.describe()}`);
+    console.error(`  ${err.message}`);
+    process.exit(1);
   }
-  console.log(`Config:  ${path.relative(process.cwd(), CONFIG_PATH)}`);
-  console.log(`History: ${path.relative(process.cwd(), PERIODS_PATH)}`);
-});
+
+  server.listen(PORT, HOST, () => {
+    console.log(`Finances → http://127.0.0.1:${PORT}`);
+    if (HOST !== '127.0.0.1') {
+      for (const address of lanAddresses()) {
+        console.log(`         → http://${address}:${PORT}`);
+      }
+      console.log('Reachable from other devices on this network. No login — set HOST=127.0.0.1 to restrict.');
+    }
+    console.log(`State:   ${store.describe()} (${store.kind})`);
+    if (seeded) console.log('         seeded from example/ — this is made-up data, not yours.');
+  });
+}
+
+start();

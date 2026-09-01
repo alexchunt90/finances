@@ -205,6 +205,44 @@ page itself loads — which looks exactly like an ad blocker and is not. Turn of
 Settings → Privacy → Security → **Use secure DNS** on any machine that reaches
 the app by its `.ts.net` name.
 
+## Linking to a section
+
+Every section has a fragment, so a link can point at one directly:
+
+```
+https://<host>/finances/#log-spending
+```
+
+The fragment names the **section**, not the tab. Which tab it lives in is
+looked up rather than spelled out, so a link never has to state both and can
+never state them inconsistently — `#log-spending` opens the Budget tab and
+scrolls there on its own. The `?view=` in the URL is filled in afterwards, so
+what you copy out of the address bar carries both and still works if the
+section moves to another tab later.
+
+| Tab | Fragments |
+|---|---|
+| **Budget** | `#this-period` `#burndown` `#log-spending` `#surprise-bills` `#waterfall` `#pace` `#close-period` |
+| **Expenses** | `#total-expenses` `#committed-bills` `#sinking-funds` `#spending-targets` `#planned-savings` `#pay-calendar` |
+| **Assets** | `#what-you-have` `#long-term-progress` `#composition` `#events` `#accounts` `#contributions` `#reconciliation` |
+| **Projections** | `#where-the-plan-lands` `#savings-trajectory` `#emergency-recovery` `#buffer-trajectory` `#mortgage-principal` `#projection-assumptions` |
+| **Mortgage** | `#loan-details` `#payment-curves` `#cliffs` `#comparison` `#mortgage-assumptions` |
+
+Hovering a section heading reveals a `#` link to it; following that puts the
+section's URL in the address bar, which is where it can be copied from.
+
+The fragment is a `data-anchor` attribute on the section, deliberately **not**
+its `id`. Ids here are wiring that CSS grid rules and render code reach for, and
+renaming one should not quietly break a link written down months ago. To add a
+section, give it `data-anchor="some-slug"` — the heading link and the routing
+pick it up with no further wiring.
+
+Two edges worth knowing. An unrecognised fragment is dropped rather than left on
+display, the same way an unrecognised `?view=` falls back to the budget. And a
+section that hides itself — the emergency block outside recovery, the cliffs
+table when there are no cliffs — opens its tab but does not scroll, since there
+is nothing there to scroll to.
+
 ## iPhone widget
 
 `scriptable/burndown-widget.js` draws the burndown on the home screen, in the

@@ -57,7 +57,7 @@
     <span id="recovery-text"></span>
   </section>
 
-  <section class="console">
+  <section data-anchor="this-period" class="console">
     <h2 class="eyebrow">This period</h2>
     <div class="readout">
       <div class="readout-primaries">
@@ -86,7 +86,7 @@
     <p class="verdict" id="verdict"></p>
   </section>
 
-  <section class="block" id="burndown-block">
+  <section data-anchor="burndown" class="block" id="burndown-block">
     <div class="block-head">
       <h2 class="eyebrow">Burndown</h2>
       <p class="block-note" id="burndown-note"></p>
@@ -95,7 +95,7 @@
     <div class="legend" id="burndown-legend"></div>
   </section>
 
-  <section class="block">
+  <section data-anchor="log-spending" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Log spending</h2>
       <p class="block-note">Entries persist and archive when the period closes.</p>
@@ -115,7 +115,7 @@
     </div>
   </section>
 
-  <section class="block">
+  <section data-anchor="surprise-bills" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Surprise bills</h2>
       <p class="block-note" id="oneoff-note">Drawn from unspent pay at close, with only the remainder taken from the buffer.</p>
@@ -135,7 +135,7 @@
     <p class="verdict" id="oneoff-settlement"></p>
   </section>
 
-  <section class="block">
+  <section data-anchor="waterfall" class="block">
     <div class="block-head">
       <h2 class="eyebrow">The waterfall</h2>
       <p class="block-note">Order money leaves take-home. Sinking funds are never reduced.</p>
@@ -148,7 +148,7 @@
     </div>
   </section>
 
-  <section class="block">
+  <section data-anchor="pace" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Spending targets — pace</h2>
       <p class="block-note" id="pace-note"></p>
@@ -156,7 +156,7 @@
     <div id="pace-rows" class="pace-rows"></div>
   </section>
 
-  <section class="block" id="close-block">
+  <section data-anchor="close-period" class="block" id="close-block">
     <div class="block-head">
       <h2 class="eyebrow">Close the period</h2>
       <p class="block-note" id="close-note"></p>
@@ -205,7 +205,7 @@
 <!-- ===================================================================== -->
 <main class="frame" id="view-expenses" hidden>
 
-  <section class="console">
+  <section data-anchor="total-expenses" class="console">
     <h2 class="eyebrow">Total Expenses</h2>
     <div class="readout">
       <div class="readout-primaries">
@@ -229,7 +229,7 @@
     <p class="verdict" id="transfer-verdict"></p>
   </section>
 
-  <section class="block">
+  <section data-anchor="committed-bills" class="block">
     <div class="block-head">
       <h2 class="eyebrow">1 · Committed bills</h2>
       <p class="block-note">Fixed each period.</p>
@@ -249,7 +249,7 @@
     </div>
   </section>
 
-  <section class="block">
+  <section data-anchor="sinking-funds" class="block">
     <div class="block-head">
       <h2 class="eyebrow">2 · Sinking funds for annual bills</h2>
       <p class="block-note">Contribute each period, pay the bill from the fund.</p>
@@ -262,7 +262,7 @@
     </div>
   </section>
 
-  <section class="block">
+  <section data-anchor="spending-targets" class="block">
     <div class="block-head">
       <h2 class="eyebrow">3 · Spending targets</h2>
       <p class="block-note">Monthly amounts. Prorated by the real length of each period.</p>
@@ -275,7 +275,7 @@
     </div>
   </section>
 
-  <section class="block">
+  <section data-anchor="planned-savings" class="block">
     <div class="block-head">
       <h2 class="eyebrow">4 · Planned savings</h2>
       <p class="block-note" id="savings-note"></p>
@@ -288,7 +288,7 @@
     </div>
   </section>
 
-  <section class="block">
+  <section data-anchor="pay-calendar" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Pay calendar</h2>
       <p class="block-note">Deposit lands the first business day before the adjusted pay date.</p>
@@ -306,7 +306,7 @@
 <!-- ===================================================================== -->
 <main class="frame" id="view-assets" hidden>
 
-  <section class="console">
+  <section data-anchor="what-you-have" class="console">
     <h2 class="eyebrow">What you actually have</h2>
     <div class="readout">
       <div class="readout-primary">
@@ -323,7 +323,7 @@
     </div>
   </section>
 
-  <section class="block" id="history-block">
+  <section data-anchor="long-term-progress" class="block" id="history-block">
     <div class="block-head">
       <h2 class="eyebrow">Long-term progress</h2>
       <p class="block-note" id="history-note"></p>
@@ -335,7 +335,7 @@
     </div>
   </section>
 
-  <section class="block" id="composition-block">
+  <section data-anchor="composition" class="block" id="composition-block">
     <div class="block-head">
       <h2 class="eyebrow">What it is made of</h2>
       <p class="block-note" id="composition-note"></p>
@@ -344,7 +344,7 @@
     <div class="legend" id="composition-legend"></div>
   </section>
 
-  <section class="block" id="events-block">
+  <section data-anchor="events" class="block" id="events-block">
     <div class="block-head">
       <h2 class="eyebrow">Events</h2>
       <p class="block-note">One-off moves that shift the line without being saving or spending. Each draws a dashed rule on both charts above — click one to read that date.</p>
@@ -357,7 +357,7 @@
     </div>
   </section>
 
-  <section class="block">
+  <section data-anchor="accounts" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Accounts</h2>
       <p class="block-note">Only accounts hold balances. Buckets are allocations inside them. Sinking funds are broken out per bill on the Expenses tab.</p>
@@ -370,7 +370,7 @@
     </div>
   </section>
 
-  <section class="block">
+  <section data-anchor="contributions" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Contribution per period</h2>
       <p class="block-note">The goal metric. Balances move on markets; this moves on decisions.</p>
@@ -378,7 +378,7 @@
     <div class="chart-shell"><svg id="chart-contrib" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
   </section>
 
-  <section class="block">
+  <section data-anchor="reconciliation" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Reconciliation — last closed period</h2>
       <p class="block-note">Balance change minus recorded flows. Only meaningful on non-volatile accounts.</p>
@@ -396,14 +396,14 @@
 <!-- ===================================================================== -->
 <main class="frame" id="view-projections" hidden>
 
-  <section class="console">
+  <section data-anchor="where-the-plan-lands" class="console">
     <div class="block-head">
       <h2 class="eyebrow">Where the plan lands</h2>
       <p class="block-note" id="projections-note"></p>
     </div>
   </section>
 
-  <section class="block" id="savings-trajectory-block">
+  <section data-anchor="savings-trajectory" class="block" id="savings-trajectory-block">
     <div class="block-head">
       <h2 class="eyebrow">Savings trajectory</h2>
       <p class="block-note" id="savings-traj-note"></p>
@@ -416,7 +416,7 @@
     <div class="legend" id="savings-traj-legend"></div>
   </section>
 
-  <section class="block" id="emergency-block" hidden>
+  <section data-anchor="emergency-recovery" class="block" id="emergency-block" hidden>
     <div class="block-head">
       <h2 class="eyebrow">Emergency fund — recovery</h2>
       <p class="block-note" id="emergency-note"></p>
@@ -424,7 +424,7 @@
     <div class="chart-shell"><svg id="chart-emergency" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
   </section>
 
-  <section class="block">
+  <section data-anchor="buffer-trajectory" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Buffer trajectory</h2>
       <p class="block-note" id="buffer-note"></p>
@@ -432,7 +432,7 @@
     <div class="chart-shell"><svg id="chart-buffer" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
   </section>
 
-  <section class="block" id="mortgage-projection-block">
+  <section data-anchor="mortgage-principal" class="block" id="mortgage-projection-block">
     <div class="block-head">
       <h2 class="eyebrow">Mortgage principal</h2>
       <p class="block-note" id="mortgage-proj-note"></p>
@@ -440,7 +440,7 @@
     <div class="chart-shell"><svg id="chart-mortgage-proj" viewBox="0 0 760 260" preserveAspectRatio="xMidYMid meet"></svg></div>
   </section>
 
-  <section class="block" id="projection-assumptions">
+  <section data-anchor="projection-assumptions" class="block" id="projection-assumptions">
     <div class="block-head">
       <h2 class="eyebrow">Assumptions</h2>
       <p class="block-note">What the projections above run on. Edits save to config.json.</p>
@@ -468,7 +468,7 @@
 <!-- ===================================================================== -->
 <main class="frame" id="view-mortgage" hidden>
 
-  <section class="console">
+  <section data-anchor="loan-details" class="console">
     <div class="block-head">
       <h2 class="eyebrow">Loan Details</h2>
     </div>
@@ -503,7 +503,7 @@
     <p class="verdict" id="mortgage-verdict"></p>
   </section>
 
-  <section class="block">
+  <section data-anchor="payment-curves" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Monthly payment curves</h2>
       <p class="block-note"><strong>Refinance</strong> steps down through pricing tiers; <strong>recast</strong> keeps your rate and payoff date and just re-amortizes.</p>
@@ -513,7 +513,7 @@
     </div>
   </section>
 
-  <section class="block" id="cliffs-block">
+  <section data-anchor="cliffs" class="block" id="cliffs-block">
     <div class="block-head">
       <h2 class="eyebrow">Every cliff, and what it costs to reach</h2>
       <p class="block-note" id="cliffs-note"></p>
@@ -529,7 +529,7 @@
     </div>
   </section>
 
-  <section class="block">
+  <section data-anchor="comparison" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Comparison</h2>
       <p class="block-note" id="horizon-note"></p>
@@ -549,7 +549,7 @@
     </p>
   </section>
 
-  <section class="block">
+  <section data-anchor="mortgage-assumptions" class="block">
     <div class="block-head">
       <h2 class="eyebrow">Assumptions</h2>
       <p class="block-note">Edits save to config.json.</p>

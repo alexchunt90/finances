@@ -119,14 +119,98 @@ function viewFromUrl() {
   return VIEWS.includes(asked) ? asked : 'budget';
 }
 
-function setView(view, { push = true } = {}) {
+function setView(view, { push = true, hash = '' } = {}) {
   state.view = VIEWS.includes(view) ? view : 'budget';
   const url = new URL(location.href);
   url.searchParams.set('view', state.view);
+  // The fragment names a section inside a tab, so it cannot outlive a move to
+  // a different one. Clicking a tab clears it; only an anchor sets it.
+  url.hash = hash ? `#${hash}` : '';
   if (url.href !== location.href) {
     history[push ? 'pushState' : 'replaceState']({ view: state.view }, '', url);
   }
   render();
+}
+
+/**
+ * Every section carries a `data-anchor` slug, and the fragment names one:
+ * `#log-spending` opens the Budget tab and scrolls to it.
+ *
+ * The slug is deliberately not the element's id. Ids here are wiring that CSS
+ * grid rules and render code reach for, and renaming one should not quietly
+ * break a link written down months ago. The fragment names a *section*, and
+ * which tab that section lives in is looked up rather than spelled out, so a
+ * link never has to state both and can never state them inconsistently.
+ */
+function sectionFor(slug) {
+  // The slug comes off the URL bar, so it is matched against a fixed shape
+  // rather than interpolated into a selector as typed.
+  return /^[a-z0-9-]+$/.test(slug || '')
+    ? document.querySelector(`[data-anchor="${slug}"]`)
+    : null;
+}
+
+const viewOf = (section) => (section.closest('main.frame')?.id || '').replace(/^view-/, '');
+
+function scrollToSection(section, { smooth = true } = {}) {
+  // A section hidden by its own render — the emergency block outside recovery,
+  // the cliffs table with no cliffs — has nothing to scroll to. Landing on the
+  // right tab is as far as the link can honestly get.
+  if (section.hidden) return;
+  const reduce = smooth ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : true;
+  const go = () => section.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  go();
+
+  // Then again once the page stops moving under it. Charts size themselves
+  // from their rendered width, so the budget tab keeps resettling for a few
+  // frames after render() and the offset just scrolled to shifts by thousands
+  // of pixels.
+  //
+  // Timers rather than animation frames: a background tab is served no frames
+  // at all, so a link opened in one would sit unscrolled until it was looked
+  // at, by which time the correction is overdue. Timers are throttled there,
+  // not stopped.
+  let last = null;
+  let tries = 0;
+  const settle = () => {
+    const top = Math.round(section.getBoundingClientRect().top + window.scrollY);
+    if (top === last) return go();
+    last = top;
+    // Capped rather than open-ended: something animating forever must not keep
+    // yanking the page back.
+    if (tries++ < 12) setTimeout(settle, 50);
+  };
+  setTimeout(settle, 50);
+}
+
+/**
+ * Point the app at whatever the URL currently asks for. An unrecognised
+ * fragment is dropped rather than kept on display, the same way an
+ * unrecognised `?view=` falls back to the budget.
+ */
+function routeFromUrl({ push = false, smooth = true } = {}) {
+  const slug = decodeURIComponent(location.hash.slice(1));
+  const section = sectionFor(slug);
+  if (!section) return setView(viewFromUrl(), { push });
+  const view = viewOf(section);
+  setView(VIEWS.includes(view) ? view : 'budget', { push, hash: slug });
+  scrollToSection(section, { smooth });
+}
+
+/**
+ * A link on every section heading. Following it puts the section's URL in the
+ * address bar, which is where it can be copied from — no clipboard permission,
+ * and right-click → copy link works without following it at all.
+ */
+function wireAnchors() {
+  for (const section of document.querySelectorAll('[data-anchor]')) {
+    const heading = section.querySelector('h2.eyebrow');
+    if (!heading || heading.querySelector('.anchor-link')) continue;
+    const link = el('a', 'anchor-link', '#');
+    link.href = `#${section.dataset.anchor}`;
+    link.setAttribute('aria-label', `Link to ${heading.textContent.trim()}`);
+    heading.append(link);
+  }
 }
 
 // --- theme ------------------------------------------------------------------
@@ -2080,6 +2164,11 @@ function wire() {
     render();
   });
 
+  // Following an anchor, or editing the fragment in the address bar. The
+  // browser has already made the history entry, so this only has to catch up
+  // to it — never push another.
+  window.addEventListener('hashchange', () => routeFromUrl({ push: false }));
+
   $('spend-form').addEventListener('submit', (ev) => {
     ev.preventDefault();
     const period = openPeriod();
@@ -2287,8 +2376,14 @@ async function boot() {
     // opened, so bring the loan balance up to date before anything renders it.
     syncMortgageBalance();
     wire();
-    // Normalise the URL on load so it always states the view, then render it.
-    setView(viewFromUrl(), { push: false });
+    // Before routing: a fragment naming a section has to find one already in
+    // the document, and the heading links have to survive the first render.
+    wireAnchors();
+    // Normalise the URL on load so it always states the view, then render it —
+    // and honour a fragment naming a section, which picks the tab for itself.
+    // Not smooth on load: a link opened straight to a section should simply be
+    // there, not sail past a screenful of everything above it.
+    routeFromUrl({ push: false, smooth: false });
   } catch (err) {
     notice(`Could not load: ${err.message}`);
   }

@@ -207,6 +207,35 @@ body {
 .block-head { margin-bottom: 12px; }
 .block-note { margin: 4px 0 0; font-size: 13px; color: var(--ink-soft); }
 
+/* --- section anchors ------------------------------------------------------ */
+
+/*
+ * A link to the section, hung off its heading. Invisible until the heading is
+ * hovered, so 31 hashes are not competing with the figures — but always there
+ * for the keyboard, which is why focus-visible brings it back rather than
+ * hover alone. Reserved width, not `display: none`, so revealing it cannot
+ * shove the heading sideways.
+ */
+.anchor-link {
+  margin-left: 0.5em;
+  color: var(--ink-faint);
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.12s ease-in-out;
+}
+.eyebrow:hover .anchor-link,
+.anchor-link:focus-visible { opacity: 1; }
+.anchor-link:hover { color: var(--accent); }
+.anchor-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+/* Breathing room above a section scrolled to by its link, rather than its top
+   rule sitting flush against the top of the window. */
+[data-anchor] { scroll-margin-top: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .anchor-link { transition: none; }
+}
+
 /* --- readout ------------------------------------------------------------- */
 
 .readout {

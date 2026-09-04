@@ -277,19 +277,82 @@ const Model = (() => {
     // holding it flat drew a plan that never spends its uncommitted pay.
     // Fixed off the opening figure, the same way a category's rate is.
     const unplannedRate = round2(Math.max(0, unplanned) / n);
+    // The cushion as it would stand on its own — drawn down at pace, but with
+    // no overspend and no surprise bill taken out of it — and the running total
+    // of category overspend that has been. settle() decides how much to borrow
+    // from these two alone, before surprise bills are considered at all, and
+    // the chart has to make the same decision from the same figures.
+    let cushionBase = round2(unplanned);
+    let overspill = 0;
+
+    /**
+     * The transfer settle() makes at close, read off any day of the chart.
+     *
+     * Overspending a category eats the cushion first. Only once that would take
+     * the cushion below zero does it borrow from categories running behind
+     * their own pace, and only down to that pace — never their whole remaining
+     * budget. Nothing is created: it moves between the two pools, so the stack
+     * stands exactly as tall either way. What changes is which band it sits in,
+     * and that is the honest picture — a cushion propped up by grocery money
+     * nobody has spent yet is not the same thing as money still uncommitted.
+     *
+     * Read fresh for each day rather than carried forward. It states where the
+     * position stands on that day; it is not an event. Carrying it would leave
+     * the lenders looking further behind tomorrow and lending again on top.
+     */
+    function lend(d) {
+      const values = Object.fromEntries(rows.map((r) => [r.id, round2(Math.max(0, left[r.id]))]));
+      // Only the overspend the cushion could not absorb is borrowable, which is
+      // settle()'s rule and not the same as "however far below zero the cushion
+      // is". A surprise bill draws on the cushion and then on the buffer; it
+      // never reaches into the planned pool, because that money is already
+      // spoken for by groceries and fuel that simply have not been bought yet.
+      const need = round2(Math.max(0, overspill - cushionBase));
+      if (need === 0) return { values, unplanned: round2(unplanned), borrowed: 0 };
+
+      // How far ahead of its own pace each category is at the start of day d,
+      // which is the most it can lend without falling behind itself.
+      const ahead = {};
+      let slack = 0;
+      for (const r of rows) {
+        const onPace = Math.max(0, round2(r.budget - r.rate * (d - 1)));
+        ahead[r.id] = round2(Math.max(0, values[r.id] - onPace));
+        slack = round2(slack + ahead[r.id]);
+      }
+
+      const borrowed = round2(Math.min(need, slack));
+      if (borrowed <= 0) return { values, unplanned: round2(unplanned), borrowed: 0 };
+
+      // In proportion to how far ahead each lender is. The last one absorbs the
+      // rounding remainder, so the parts always sum to the whole.
+      const donors = rows.filter((r) => ahead[r.id] > 0);
+      let rest = borrowed;
+      donors.forEach((r, i) => {
+        const share = i === donors.length - 1
+          ? rest
+          : Math.min(ahead[r.id], round2(borrowed * (ahead[r.id] / slack)));
+        const take = round2(Math.max(0, Math.min(share, ahead[r.id], rest)));
+        values[r.id] = round2(values[r.id] - take);
+        rest = round2(rest - take);
+      });
+      return { values, unplanned: round2(unplanned + borrowed), borrowed };
+    }
 
     const points = [];
     for (let d = 1; d <= n + 1; d++) {
+      const settled = lend(d);
       points.push({
         day: d,
         projected: d > todayDay,
-        values: Object.fromEntries(rows.map((r) => [r.id, round2(Math.max(0, left[r.id]))])),
-        // The cushion can be overdrawn by spending that already happened, and
-        // the total says so: the chart draws that as a band below the axis
-        // rather than pretending the money is still there.
-        unplanned: round2(unplanned),
-        overrun: round2(Math.max(0, -unplanned)),
-        total: round2(sum(rows, (r) => Math.max(0, left[r.id])) + unplanned),
+        values: settled.values,
+        // The cushion can still be overdrawn once everything behind pace has
+        // lent what it can, and the total says so: the chart draws that as a
+        // band below the axis rather than pretending the money is still there.
+        unplanned: settled.unplanned,
+        overrun: round2(Math.max(0, -settled.unplanned)),
+        // What the categories are covering for the cushion on this day.
+        borrowed: settled.borrowed,
+        total: round2(sum(rows, (r) => settled.values[r.id]) + settled.unplanned),
       });
       if (d > n) break;
 
@@ -301,6 +364,7 @@ const Model = (() => {
         left[r.id] = round2(left[r.id] - byDay[r.id][d]);
         if (left[r.id] < 0) {
           unplanned = round2(unplanned + left[r.id]);
+          overspill = round2(overspill - left[r.id]);
           left[r.id] = 0;
         }
         // Past today, the pace assumption fills in the ordinary days around
@@ -321,6 +385,7 @@ const Model = (() => {
       // spending would compound an overdraft nobody has committed to.
       if (d > todayDay && unplannedRate > 0) {
         unplanned = round2(unplanned - Math.min(unplannedRate, Math.max(0, unplanned)));
+        cushionBase = round2(Math.max(0, cushionBase - unplannedRate));
       }
     }
 

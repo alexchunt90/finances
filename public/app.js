@@ -613,8 +613,21 @@ function renderBurndown(cfg, period, wf) {
           : `${fmt.usd(-gap)} below it, so faster than pace.`)
     );
   }
+  // Why a category band can be shorter than that category's untouched budget.
+  // Without this the bands look wrong to anyone who checks them against the
+  // pace table.
+  if (left && left.borrowed > 0) {
+    parts.push(
+      `${fmt.usd(left.borrowed)} of category budget is covering overspending elsewhere, ` +
+      `taken only from categories behind their pace — those bands show what they have lent, not what they have spent.`
+    );
+  }
   if (left && left.overrun > 0) {
-    parts.push(`The unplanned cushion is ${fmt.usd(left.overrun)} overdrawn — that is the band below the axis.`);
+    parts.push(
+      `The unplanned cushion is ${fmt.usd(left.overrun)} overdrawn` +
+      (left.borrowed > 0 ? ' even after that' : '') +
+      ` — that is the band below the axis.`
+    );
   }
   // The projection is an assumption, not a reading of the days so far, so it
   // is worth stating rather than leaving the reader to infer it.

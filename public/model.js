@@ -277,12 +277,17 @@ const Model = (() => {
     // holding it flat drew a plan that never spends its uncommitted pay.
     // Fixed off the opening figure, the same way a category's rate is.
     const unplannedRate = round2(Math.max(0, unplanned) / n);
-    // The cushion as it would stand on its own — drawn down at pace, but with
-    // no overspend and no surprise bill taken out of it — and the running total
-    // of category overspend that has been. settle() decides how much to borrow
-    // from these two alone, before surprise bills are considered at all, and
-    // the chart has to make the same decision from the same figures.
-    let cushionBase = round2(unplanned);
+    // What the cushion can absorb, and how much category overspend it has been
+    // asked to. settle() decides how much to borrow from these two alone,
+    // before surprise bills are considered at all, and the chart has to make
+    // the same decision from the same figures.
+    //
+    // A capacity, not a balance: the whole period's uncommitted pay is there to
+    // absorb an overspend on day 2 as much as on day 15, so it does not shrink
+    // as the days pass. Draining it would make the same overspend look less and
+    // less coverable each day, and the borrowing it triggered would grow to
+    // match — drawing a cushion that refills itself into the future.
+    const cushionBase = round2(unplanned);
     let overspill = 0;
 
     /**
@@ -385,7 +390,6 @@ const Model = (() => {
       // spending would compound an overdraft nobody has committed to.
       if (d > todayDay && unplannedRate > 0) {
         unplanned = round2(unplanned - Math.min(unplannedRate, Math.max(0, unplanned)));
-        cushionBase = round2(Math.max(0, cushionBase - unplannedRate));
       }
     }
 

@@ -63,9 +63,15 @@ jobs:
       - name: No credentials or private hostnames
         run: |
           patterns='AKIA[0-9A-Z]{16}|aws_secret_access_key|-----BEGIN [A-Z ]*PRIVATE KEY-----|\.ts\.net'
-          # .env.example and the README describe these by name on purpose; the
-          # widgets carry a YOUR-HOST placeholder.
-          if git grep -nIE "$patterns" -- . ':!.env.example' ':!README.md' | grep -v 'YOUR-HOST'; then
+          # Excluded on purpose: .env.example and the README name these things
+          # to explain them, and this file has to contain the patterns it
+          # searches for. The widgets carry a YOUR-HOST placeholder, and
+          # AKIAIOSFODNN7EXAMPLE is the key AWS publishes in its own signing
+          # examples — the test pins a signature against it, so it cannot be
+          # anyone's real credential.
+          if git grep -nIE "$patterns" -- . \
+               ':!.env.example' ':!README.md' ':!.github/workflows/test.yml' \
+             | grep -v -e 'YOUR-HOST' -e 'AKIAIOSFODNN7EXAMPLE'; then
             echo "::error::something that looks like a credential or a private hostname is committed"
             exit 1
           fi

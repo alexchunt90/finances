@@ -252,6 +252,12 @@ function queueSave(what) {
   status('saving…');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flush, 400);
+  // Every change comes through here, which makes it the one place that can keep
+  // the masthead honest. Logging a spend used to redraw only the tab it was
+  // logged on, leaving "left to spend" above it reading whatever it read before
+  // — right until the next reload. Hooking the redraw to each handler instead
+  // would fix the ones that exist and miss the next one added.
+  renderMasthead();
 }
 
 async function flush() {
@@ -2159,24 +2165,44 @@ function setIfIdle(id, value) {
 
 // --- wiring -----------------------------------------------------------------
 
+/**
+ * The masthead belongs to no single tab, so it is filled on its own — a deep
+ * link straight to Expenses or Assets must not land on an empty header, and a
+ * figure logged on one tab must not leave a stale total above it.
+ *
+ * Guarded because reading the state can change it: context() asks for the open
+ * period, and if none exists openPeriod() creates one and saves it, which comes
+ * straight back here. The recursion is only ever one deep — the new period is
+ * in place before the save is queued — but a header painting itself from
+ * halfway through painting itself is not worth relying on.
+ */
+let paintingMasthead = false;
+function renderMasthead() {
+  if (paintingMasthead) return;
+  paintingMasthead = true;
+  try {
+    const { period, days, balances, buckets, wf, pace } = context();
+    const summary = Model.assetSummary(state.config, balances, buckets);
+    const left = leftToSpend(state.config, period, wf, pace);
+    $('chip-accessible').textContent = fmt.usd0(summary.accessible);
+    $('chip-networth').textContent = fmt.usd0(summary.total);
+    $('chip-takehome').textContent = fmt.usd(period.takeHome);
+    $('chip-left').textContent = fmt.usd(left);
+    $('chip-left-wrap').classList.toggle('is-warn', left < 0);
+    $('period-caption').textContent =
+      `Period ${fmt.day(period.start)} – ${fmt.day(period.scheduledEnd)} · day ${days.elapsed} of ${days.projected}` +
+      (days.late ? ' · closing late' : '');
+  } finally {
+    paintingMasthead = false;
+  }
+}
+
 function render() {
   for (const view of VIEWS) {
     $(`view-${view}`).hidden = view !== state.view;
   }
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.view === state.view));
-  // The masthead belongs to no single tab, so it is filled here — a deep link
-  // straight to Expenses or Assets must not land on an empty header.
-  const { period, days, balances, buckets, wf, pace } = context();
-  const summary = Model.assetSummary(state.config, balances, buckets);
-  const left = leftToSpend(state.config, period, wf, pace);
-  $('chip-accessible').textContent = fmt.usd0(summary.accessible);
-  $('chip-networth').textContent = fmt.usd0(summary.total);
-  $('chip-takehome').textContent = fmt.usd(period.takeHome);
-  $('chip-left').textContent = fmt.usd(left);
-  $('chip-left-wrap').classList.toggle('is-warn', left < 0);
-  $('period-caption').textContent =
-    `Period ${fmt.day(period.start)} – ${fmt.day(period.scheduledEnd)} · day ${days.elapsed} of ${days.projected}` +
-    (days.late ? ' · closing late' : '');
+  renderMasthead();
 
   if (state.view === 'budget') renderBudget();
   if (state.view === 'expenses') renderExpenses();

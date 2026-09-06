@@ -3,16 +3,49 @@
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const http = require('node:http');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { ROOT, tempState, freePort } = require('./helpers.js');
 
-let proc, base, stateDir, banner;
+let proc, base, stateDir, banner, upstream, upstreamHits;
+
+/**
+ * A stand-in for Yahoo, so the suite never depends on a market data service
+ * being up — or on a market being open. Answers any symbol it has been told
+ * about with a short flat series; 404s the rest the way Yahoo does.
+ */
+const FAKE_QUOTES = {
+  SPY: { price: 500, prevClose: 495 },
+  'BTC-USD': { price: 80000, prevClose: 81000 },
+};
+function startUpstream() {
+  upstreamHits = [];
+  const server = http.createServer((req, res) => {
+    const symbol = decodeURIComponent(new URL(req.url, 'http://x').pathname.split('/').pop());
+    upstreamHits.push(symbol);
+    const fake = FAKE_QUOTES[symbol];
+    res.setHeader('content-type', 'application/json');
+    if (!fake) {
+      res.writeHead(404);
+      return res.end(JSON.stringify({ chart: { result: null, error: { code: 'Not Found', description: 'No data found, symbol may be delisted' } } }));
+    }
+    const start = 1_700_000_000;
+    const closes = [fake.prevClose + 1, fake.prevClose + 2, fake.price];
+    res.end(JSON.stringify({ chart: { result: [{
+      meta: { symbol, currency: 'USD', longName: `${symbol} Fund`, regularMarketPrice: fake.price, chartPreviousClose: fake.prevClose, regularMarketTime: start + 600 },
+      timestamp: closes.map((_, i) => start + i * 300),
+      indicators: { quote: [{ close: closes }] },
+    }], error: null } }));
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
 
 before(async () => {
   stateDir = await tempState();
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
+  upstream = await startUpstream();
 
   proc = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT,
@@ -25,6 +58,7 @@ before(async () => {
       // machine configured against a real bucket would otherwise point this
       // whole suite at live money.
       S3_BUCKET: '',
+      QUOTES_URL: `http://127.0.0.1:${upstream.address().port}/chart`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -43,6 +77,7 @@ before(async () => {
 
 after(async () => {
   if (proc) proc.kill();
+  if (upstream) upstream.close();
   if (stateDir) await fsp.rm(stateDir, { recursive: true, force: true });
 });
 
@@ -171,6 +206,58 @@ describe('server', () => {
       assert.equal(res.status, 200);
       const w = await res.json();
       assert.ok(Array.isArray(w.series));
+    });
+
+    test('tickers takes the widget parameter, and falls back to the watchlist', async () => {
+      const res = await get('/api/widget/tickers?symbols=spy,btc,nope&range=1d');
+      assert.equal(res.status, 200);
+      const w = await res.json();
+      assert.equal(w.range, '1d');
+      assert.match(w.accent, /^#[0-9a-fA-F]{6}$/, 'carries the page colour');
+      assert.deepEqual(w.quotes.map((q) => q.label), ['SPY', 'BTC', 'NOPE']);
+      assert.equal(w.quotes[1].symbol, 'BTC-USD', 'the coin, not the ETF');
+      assert.equal(w.quotes[1].price, 80000);
+      assert.equal(w.quotes[2].error, 'not found');
+
+      // No parameter: whatever the watchlist in config holds, in its order.
+      const all = await (await get('/api/widget/tickers')).json();
+      const { config } = await (await get('/api/state')).json();
+      const expected = config.investments.groups.flatMap((g) => g.symbols);
+      assert.deepEqual(all.quotes.map((q) => q.label), expected);
+    });
+  });
+
+  describe('quotes', () => {
+    test('the page gets every symbol it asked for, good or bad', async () => {
+      const res = await get('/api/quotes?symbols=SPY,NOPE&range=1y');
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.range, '1y');
+      assert.ok(Array.isArray(body.ranges) && body.ranges.length === 7, 'and the ranges it can ask for');
+      const [spy, nope] = body.quotes;
+      assert.equal(spy.price, 500);
+      assert.equal(spy.change, 5);
+      assert.ok(spy.points.length >= 2);
+      assert.equal(nope.error, 'not found');
+    });
+
+    test('a second ask inside the TTL is answered from the cache, not upstream', async () => {
+      const before = upstreamHits.length;
+      await get('/api/quotes?symbols=SPY&range=1y');
+      await get('/api/quotes?symbols=SPY&range=1y');
+      assert.equal(upstreamHits.length, before, 'SPY over 1y was already held');
+    });
+
+    test('an unknown range falls back rather than 400ing', async () => {
+      const res = await get('/api/quotes?symbols=SPY&range=century');
+      assert.equal(res.status, 200);
+      assert.equal((await res.json()).range, '1d');
+    });
+
+    test('nothing to ask for is an empty list, not an error', async () => {
+      const res = await get('/api/quotes?symbols=%2C%2C');
+      assert.equal(res.status, 200);
+      assert.deepEqual((await res.json()).quotes, []);
     });
   });
 

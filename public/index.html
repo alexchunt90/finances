@@ -44,6 +44,7 @@
   <button role="tab" class="tab" data-view="assets">Assets</button>
   <button role="tab" class="tab" data-view="projections">Projections</button>
   <button role="tab" class="tab" data-view="mortgage">Mortgage</button>
+  <button role="tab" class="tab" data-view="investments">Investments</button>
   <span class="tab-status" id="save-status" role="status"></span>
 </nav>
 
@@ -596,6 +597,49 @@
       Every figure is principal, interest, and mortgage insurance only. Taxes and homeowners insurance are excluded
       .
     </p>
+  </section>
+
+</main>
+
+<!-- ===================================================================== -->
+<main class="frame" id="view-investments" hidden>
+
+  <section data-anchor="tickers" class="console" id="tickers-block">
+    <div class="block-head ticker-head">
+      <div>
+        <h2 class="eyebrow">Tickers</h2>
+        <p class="block-note" id="tickers-note">—</p>
+      </div>
+      <div class="range-buttons" id="range-buttons" role="group" aria-label="Range"></div>
+    </div>
+    <div id="ticker-groups" class="ticker-groups"></div>
+  </section>
+
+  <section data-anchor="performance" class="block" id="performance-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Performance</h2>
+      <p class="block-note" id="performance-note">Every symbol rebased to zero at the start of the range, so one line is comparable with the next. Click a ticker above to read one on its own.</p>
+    </div>
+    <div class="chart-shell"><svg id="chart-performance" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="scrub-row">
+      <span class="scrub-hint" id="perf-scrub-hint">Drag the chart to read a moment.</span>
+      <button type="button" class="jump-button" id="perf-scrub-reset" hidden>Back to latest</button>
+    </div>
+    <div class="legend" id="performance-legend"></div>
+  </section>
+
+  <section data-anchor="watchlist" class="block" id="watchlist-block">
+    <div class="block-head">
+      <h2 class="eyebrow">Watchlist</h2>
+      <p class="block-note">What the tickers above show, in groups. Symbols are Yahoo Finance tickers, comma-separated: <code>SPY, NVDA, BTC, GLD, VFIAX, EEM</code>. A bare crypto ticker means the coin against the dollar. Edits save to config.json.</p>
+    </div>
+    <div id="watchlist-groups" class="watchlist-groups"></div>
+    <div class="watchlist-actions">
+      <button type="button" class="ghost-button" id="watchlist-add">Add group</button>
+      <label class="watchlist-refresh">Refresh every
+        <input type="number" id="in-refresh-seconds" min="15" max="3600" step="15" /> s
+      </label>
+    </div>
   </section>
 
 </main>

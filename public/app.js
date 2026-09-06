@@ -8,7 +8,7 @@
 
 'use strict';
 
-const VIEWS = ['budget', 'expenses', 'assets', 'projections', 'mortgage'];
+const VIEWS = ['budget', 'expenses', 'assets', 'projections', 'mortgage', 'investments'];
 
 // Which column each sortable table is ordered by. In memory only — a sort is a
 // way of looking at the data, not a property of it.
@@ -17,6 +17,9 @@ const sorts = { committed: { col: 'perPeriod', key: 'perPeriod', dir: 'desc' } }
 // the latest. It is view state, not saved: it belongs to the session, not the
 // file.
 const state = { config: null, periods: [], history: { snapshots: [], events: [] }, amortization: { payments: [] }, view: 'budget', scrub: null, projScrub: null };
+// The Investments tab's live state. `range` and `focus` are how the tab is
+// being looked at, not what is watched — the watchlist itself is config.
+const quotes = { range: '1d', focus: null, scrub: null, data: null, fetchedAt: null, timer: null, inFlight: null, refetchTimer: null };
 
 // --- formatting -------------------------------------------------------------
 
@@ -2157,6 +2160,579 @@ function setIfIdle(id, value) {
   input.value = value;
 }
 
+// --- investments view -------------------------------------------------------
+//
+// The watchlist lives in config.investments and saves like any other config
+// edit. Quotes come from the server's /api/quotes, which caches upstream so a
+// tab polling every minute costs one fetch per symbol per TTL. Nothing here
+// is arithmetic the model needs to agree with — it is a display of prices.
+
+const RANGE_LABELS = { '1d': '24h', '1w': '1W', '1m': '1M', '3m': '3M', '1y': '1Y', '3y': '3Y', '10y': '10Y' };
+const RANGE_KEYS = Object.keys(RANGE_LABELS);
+
+// One colour per symbol, in watchlist order. The accent leads; the rest are
+// chosen to stay apart from each other and from the gain/cost reds and greens
+// the cards use for direction.
+const SERIES_PALETTE = ['#6aa9d8', '#4ec9a5', '#e8705f', '#b98cf0', '#f0a35e', '#7fc8d8', '#d0d0d8', '#c9a2c2', '#8fb87a'];
+const seriesColor = (i) => (i === 0 ? (state.config.theme?.accent || '#D4AF37') : SERIES_PALETTE[(i - 1) % SERIES_PALETTE.length]);
+
+const watchlist = () => {
+  const inv = state.config.investments || (state.config.investments = { refreshSeconds: 60, groups: [] });
+  if (!Array.isArray(inv.groups)) inv.groups = [];
+  return inv;
+};
+
+/** The same normalisation the server applies, so the cards match the quotes that come back. */
+const CRYPTO_BARE = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'ADA', 'LTC', 'BNB', 'AVAX', 'DOT', 'LINK', 'MATIC', 'BCH', 'XLM', 'UNI', 'ATOM', 'TRX', 'SHIB', 'NEAR', 'XMR']);
+const SYMBOL_SHAPE = /^[A-Z0-9^][A-Z0-9.\-=^&]{0,19}$/;
+function splitSymbols(text) {
+  const out = [];
+  for (const raw of String(text || '').split(',')) {
+    const label = raw.trim().toUpperCase();
+    if (!SYMBOL_SHAPE.test(label)) continue;
+    const symbol = CRYPTO_BARE.has(label) ? `${label}-USD` : label;
+    if (!out.some((s) => s.symbol === symbol)) out.push({ symbol, label });
+  }
+  return out;
+}
+
+/** Every watched symbol in display order, each once, with the group it belongs to. */
+function watchedSymbols() {
+  const seen = new Set();
+  const out = [];
+  for (const group of watchlist().groups) {
+    for (const s of splitSymbols((group.symbols || []).join(','))) {
+      if (seen.has(s.symbol)) continue;
+      seen.add(s.symbol);
+      out.push({ ...s, group: group.name || '' });
+    }
+  }
+  return out;
+}
+
+const quoteFor = (symbol) => (quotes.data?.quotes || []).find((q) => q.symbol === symbol) || null;
+
+const moneyFor = (() => {
+  const cache = {};
+  return (currency) => {
+    const code = /^[A-Z]{3}$/.test(currency || '') ? currency : 'USD';
+    if (!cache[code]) {
+      try {
+        cache[code] = new Intl.NumberFormat('en-US', { style: 'currency', currency: code, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      } catch {
+        cache[code] = money2;
+      }
+    }
+    return cache[code];
+  };
+})();
+
+const fmtPrice = (n, currency) => {
+  if (!Number.isFinite(n)) return '—';
+  if (Math.abs(n) < 1) return `${moneyFor(currency).format(0).replace(/[\d.,]+/, '')}${n.toFixed(4)}`;
+  return moneyFor(currency).format(n);
+};
+const fmtPct = (n) => (Number.isFinite(n) ? `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(2)}%` : '—');
+const fmtDelta = (n, currency) => (Number.isFinite(n) ? `${n >= 0 ? '+' : '−'}${fmtPrice(Math.abs(n), currency).replace(/^[^\d]*/, '')}` : '—');
+const clock = (ms) => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+
+/**
+ * Ask the server for every watched symbol over the current range. Symbols are
+ * sent explicitly rather than read from the server's copy of config, so a
+ * watchlist edit shows up before its debounced save has landed.
+ */
+async function fetchQuotes() {
+  const symbols = watchedSymbols();
+  if (!symbols.length) {
+    quotes.data = { quotes: [], range: quotes.range };
+    quotes.fetchedAt = Date.now();
+    renderTickers();
+    return;
+  }
+  if (quotes.inFlight) return quotes.inFlight;
+  const range = quotes.range;
+  const url = `api/quotes?symbols=${encodeURIComponent(symbols.map((s) => s.label).join(','))}&range=${range}`;
+  quotes.inFlight = (async () => {
+    try {
+      const payload = await request(url, 'GET');
+      // The range may have changed while this was in the air; a stale answer
+      // must not overwrite the one the buttons now say is on screen.
+      if (range !== quotes.range) return;
+      quotes.data = payload;
+      quotes.fetchedAt = Date.now();
+      quotes.failed = null;
+    } catch (err) {
+      quotes.failed = err.message;
+    } finally {
+      quotes.inFlight = null;
+    }
+    if (state.view === 'investments') renderTickers();
+  })();
+  return quotes.inFlight;
+}
+
+/**
+ * Poll while the tab is open and the page is visible. A hidden page is not
+ * looked at, and iOS throttles it anyway; the moment it comes back it fetches
+ * rather than waiting out the rest of an interval.
+ */
+function startQuotePolling() {
+  stopQuotePolling();
+  const every = Math.min(3600, Math.max(15, Number(watchlist().refreshSeconds) || 60)) * 1000;
+  quotes.timer = setInterval(() => {
+    if (document.visibilityState === 'visible') fetchQuotes();
+  }, every);
+}
+
+function stopQuotePolling() {
+  if (quotes.timer) clearInterval(quotes.timer);
+  quotes.timer = null;
+}
+
+/** A watchlist edit: redraw from what is held, then fetch once typing pauses. */
+function watchlistChanged() {
+  queueSave('config');
+  renderTickers();
+  clearTimeout(quotes.refetchTimer);
+  quotes.refetchTimer = setTimeout(() => { fetchQuotes(); startQuotePolling(); }, 700);
+}
+
+function renderInvestments() {
+  renderRangeButtons();
+  renderTickers();
+  renderWatchlist();
+  // Fresh on the way in, and then on the clock. What is held draws first, so a
+  // tab flipped back to shows figures at once rather than an empty grid.
+  if (!quotes.data || quotes.data.range !== quotes.range) fetchQuotes();
+  else if (quotes.fetchedAt && Date.now() - quotes.fetchedAt > 15000) fetchQuotes();
+  startQuotePolling();
+}
+
+function renderRangeButtons() {
+  const wrap = $('range-buttons');
+  wrap.replaceChildren();
+  for (const key of RANGE_KEYS) {
+    const b = el('button', 'jump-button' + (key === quotes.range ? ' is-active' : ''), RANGE_LABELS[key]);
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(key === quotes.range));
+    b.addEventListener('click', () => {
+      if (quotes.range === key) return;
+      quotes.range = key;
+      quotes.scrub = null;
+      renderRangeButtons();
+      renderTickers();
+      fetchQuotes();
+    });
+    wrap.append(b);
+  }
+}
+
+/** The cards, the chart and the legend — everything that reads the quotes. */
+function renderTickers() {
+  const symbols = watchedSymbols();
+  const groupsEl = $('ticker-groups');
+  groupsEl.replaceChildren();
+
+  const note = $('tickers-note');
+  if (!symbols.length) {
+    note.textContent = 'Nothing watched yet. Add symbols to the watchlist below.';
+  } else if (quotes.failed) {
+    note.textContent = `Could not reach the server for quotes: ${quotes.failed}.` + (quotes.fetchedAt ? ` Showing figures from ${clock(quotes.fetchedAt)}.` : '');
+  } else if (!quotes.fetchedAt) {
+    note.textContent = 'Fetching…';
+  } else {
+    const every = Math.min(3600, Math.max(15, Number(watchlist().refreshSeconds) || 60));
+    const stale = (quotes.data?.quotes || []).some((q) => q.stale);
+    note.textContent =
+      `Updated ${clock(quotes.fetchedAt)} · refreshes every ${every}s · ` +
+      (quotes.range === '1d' ? 'change since the previous close; 24h is the latest session for anything exchange-traded' : `change over the past ${RANGE_LABELS[quotes.range]}`) +
+      (stale ? ' · some figures are stale: the source could not be reached' : '');
+  }
+
+  // Focus can outlive the symbol it named — removed from the watchlist, say.
+  if (quotes.focus && !symbols.some((s) => s.symbol === quotes.focus)) quotes.focus = null;
+
+  const colorOf = new Map(symbols.map((s, i) => [s.symbol, seriesColor(i)]));
+
+  for (const group of watchlist().groups) {
+    const members = symbols.filter((s) => s.group === (group.name || '') && splitSymbols((group.symbols || []).join(',')).some((g) => g.symbol === s.symbol));
+    if (!members.length) continue;
+    const wrap = el('div', 'ticker-group');
+    if (group.name) wrap.append(el('h3', 'ticker-group-name', group.name));
+    const grid = el('div', 'ticker-grid');
+    for (const s of members) grid.append(tickerCard(s, quoteFor(s.symbol), colorOf.get(s.symbol)));
+    wrap.append(grid);
+    groupsEl.append(wrap);
+  }
+
+  renderPerformance();
+}
+
+function tickerCard(s, q, color) {
+  const card = el('button', 'ticker');
+  card.type = 'button';
+  card.style.setProperty('--series', color);
+  if (quotes.focus === s.symbol) card.classList.add('is-focus');
+
+  card.append(el('span', 'ticker-symbol', s.label));
+
+  if (!q || q.error) {
+    card.classList.add('is-error');
+    card.append(el('span', 'ticker-price', q ? '—' : '…'));
+    card.append(el('span', 'ticker-name', q ? (q.error === 'not found' ? 'Not found on Yahoo Finance' : `Unavailable: ${q.error}`) : 'fetching'));
+    card.append(el('span', 'ticker-change', ''));
+    if (!q) card.disabled = false;
+    card.addEventListener('click', () => { quotes.focus = quotes.focus === s.symbol ? null : s.symbol; renderTickers(); });
+    return card;
+  }
+
+  card.title = `${q.name} · ${q.symbol}` + (q.exchange ? ` · ${q.exchange}` : '');
+  card.append(el('span', 'ticker-price', fmtPrice(q.price, q.currency)));
+  const name = el('span', 'ticker-name', q.name);
+  card.append(name);
+
+  const up = (q.rangeChange || 0) >= 0;
+  const change = el('span', 'ticker-change ' + (Number.isFinite(q.rangeChange) ? (up ? 'is-gain' : 'is-cost') : ''),
+    `${fmtDelta(q.rangeChange, q.currency)} · ${fmtPct(q.rangeChangePct)}`);
+  card.append(change);
+
+  const spark = el('div', 'ticker-spark');
+  spark.append(sparkline(q));
+  card.append(spark);
+
+  if (q.stale) card.append(el('span', 'ticker-stale', 'stale'));
+
+  card.addEventListener('click', () => {
+    quotes.focus = quotes.focus === s.symbol ? null : s.symbol;
+    renderTickers();
+  });
+  return card;
+}
+
+/** The range's price path in a card, with the baseline the change is measured from. */
+function sparkline(q) {
+  const W = 100, H = 36;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', 'aria-hidden': 'true' });
+  const pts = q.points || [];
+  if (pts.length < 2) return svg;
+  const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+  const vals = pts.map((p) => p[1]).concat(Number.isFinite(q.rangeStart) ? [q.rangeStart] : []);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const span = hi - lo || Math.abs(hi) * 0.01 || 1;
+  const x = (t) => ((t - t0) / (t1 - t0 || 1)) * W;
+  const y = (v) => 3 + (1 - (v - lo) / span) * (H - 6);
+  if (Number.isFinite(q.rangeStart)) {
+    svg.append(svgEl('line', { x1: 0, y1: y(q.rangeStart).toFixed(1), x2: W, y2: y(q.rangeStart).toFixed(1), class: 'spark-base', 'vector-effect': 'non-scaling-stroke' }));
+  }
+  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(' ');
+  const up = (q.rangeChange || 0) >= 0;
+  svg.append(svgEl('path', { d, class: 'spark-line ' + (up ? 'is-gain' : 'is-cost'), 'vector-effect': 'non-scaling-stroke' }));
+  return svg;
+}
+
+/**
+ * Every watched symbol on one chart, each rebased to zero at the start of the
+ * range — the only honest way to put a $770 ETF and an $80,000 coin on the
+ * same axis. With one symbol in focus the chart shows its price instead, with
+ * the previous close ruled across on the 24h view.
+ *
+ * Time is rebased too, in the comparison. A coin trades through the weekend
+ * and an ETF does not, so "the past 24 hours" is Saturday evening for one and
+ * Friday's session for the other; on a shared clock the lines would sit apart
+ * with a day of nothing between them. Each is drawn across its own window
+ * instead, start to latest, which is the comparison the range button asked
+ * for. The single-symbol view has one window and gets a real time axis.
+ *
+ * Dragging reads the chart at a point. The position is a fraction of the
+ * window, so in the comparison it lands on each line at the same fraction of
+ * *its* window — a different moment per symbol, which the legend spells out —
+ * and a fraction survives the next refetch without going stale.
+ */
+function renderPerformance() {
+  const symbols = watchedSymbols();
+  const colorOf = new Map(symbols.map((s, i) => [s.symbol, seriesColor(i)]));
+  const svg = $('chart-performance');
+  const legend = $('performance-legend');
+  svg.replaceChildren();
+  legend.replaceChildren();
+  svg.__axis = null;
+
+  const live = symbols
+    .map((s) => ({ ...s, q: quoteFor(s.symbol) }))
+    .filter((s) => s.q && !s.q.error && (s.q.points || []).length >= 2);
+  if (!live.length) {
+    renderPerformanceScrubRow(null, null);
+    return emptyChart(svg, quotes.fetchedAt ? 'nothing to draw' : 'fetching');
+  }
+
+  const focus = quotes.focus && live.find((s) => s.symbol === quotes.focus);
+  const drawn = focus ? [focus] : live;
+
+  const W = 760, H = 340;
+  const k = chartScale(svg, W);
+  const pad = { l: 14 + 52 * k, r: 16, t: 14 * k, b: 16 + 18 * k };
+
+  // Each series as drawn: x is the fraction of its own window, y a percentage
+  // from the range start — or the price itself when one symbol is on its own.
+  // The raw point rides along so a scrub can quote it.
+  const series = drawn.map((s) => {
+    const base = Number.isFinite(s.q.rangeStart) ? s.q.rangeStart : s.q.points[0][1];
+    const t0 = s.q.points[0][0], t1 = s.q.points[s.q.points.length - 1][0];
+    const pts = s.q.points.map(([t, v]) => ({ f: (t - t0) / (t1 - t0 || 1), y: focus ? v : base ? ((v - base) / base) * 100 : 0, t, v }));
+    return { ...s, pts, base, t0, t1 };
+  });
+
+  const vals = series.flatMap((s) => s.pts.map((p) => p.y));
+  if (focus && quotes.range === '1d' && Number.isFinite(focus.q.prevClose)) vals.push(focus.q.prevClose);
+  if (!focus) vals.push(0);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const room = (hi - lo) * 0.08 || Math.abs(hi) * 0.01 || 1;
+  lo -= room; hi += room;
+  const span = hi - lo || 1;
+
+  const x = (f) => pad.l + f * (W - pad.l - pad.r);
+  const y = (v) => pad.t + (1 - (v - lo) / span) * (H - pad.t - pad.b);
+  svg.__axis = { x0: pad.l, x1: W - pad.r, W };
+
+  svg.append(svgEl('line', { x1: pad.l, y1: H - pad.b, x2: W - pad.r, y2: H - pad.b, class: 'axis-line' }));
+  for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
+    const v = lo + span * frac;
+    const t = svgEl('text', { x: pad.l - 8 * k, y: y(v) + 4 * k, 'text-anchor': 'end', class: 'axis-text' });
+    t.textContent = focus ? shortPrice(v, focus.q.currency) : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(Math.abs(span) < 2 ? 2 : 1)}%`;
+    svg.append(t);
+  }
+
+  // The zero rule on the comparison, the previous close on a single symbol.
+  if (!focus) {
+    svg.append(svgEl('line', { x1: pad.l, y1: y(0), x2: W - pad.r, y2: y(0), class: 'target-line' }));
+  } else if (quotes.range === '1d' && Number.isFinite(focus.q.prevClose)) {
+    svg.append(svgEl('line', { x1: pad.l, y1: y(focus.q.prevClose), x2: W - pad.r, y2: y(focus.q.prevClose), class: 'target-line' }));
+    const t = svgEl('text', { x: W - pad.r, y: Math.max(y(focus.q.prevClose) - 6 * k, pad.t + 10 * k), 'text-anchor': 'end', class: 'axis-text' });
+    t.textContent = `prev close ${fmtPrice(focus.q.prevClose, focus.q.currency)}`;
+    svg.append(t);
+  }
+
+  for (const s of series) {
+    const d = s.pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.f).toFixed(1)},${y(p.y).toFixed(1)}`).join(' ');
+    if (focus) {
+      const baseY = y(Math.max(lo, Math.min(hi, focus.q.rangeStart ?? lo)));
+      svg.append(svgEl('path', { d: `${d} L${x(1).toFixed(1)},${baseY.toFixed(1)} L${x(0).toFixed(1)},${baseY.toFixed(1)} Z`, class: 'series-area' }));
+    }
+    svg.append(svgEl('path', { d, class: 'performance-line', style: `stroke:${colorOf.get(s.symbol)}` }));
+  }
+
+  const tickY = H - pad.b + 4 + 14 * k;
+  if (focus) {
+    const s = series[0];
+    const ticks = timeTicks(s.t0, s.t1, quotes.range).map((tk) => ({ x: x((tk.t - s.t0) / (s.t1 - s.t0 || 1)), text: tk.text }));
+    for (const tick of spacedTicks(ticks, k, { min: pad.l, max: W - pad.r })) {
+      const t = svgEl('text', { x: tick.x, y: tickY, 'text-anchor': 'middle', class: 'axis-text' });
+      t.textContent = tick.text;
+      svg.append(t);
+    }
+  } else {
+    // No dates: the windows differ per symbol, so a date here would be true
+    // of one line and wrong for the next. The ends are all they share.
+    const from = svgEl('text', { x: pad.l, y: tickY, 'text-anchor': 'start', class: 'axis-text' });
+    from.textContent = `start of ${RANGE_LABELS[quotes.range]}`;
+    const to = svgEl('text', { x: W - pad.r, y: tickY, 'text-anchor': 'end', class: 'axis-text' });
+    to.textContent = 'latest';
+    svg.append(from, to);
+  }
+
+  // The scrub: the point on each drawn line nearest the fraction, a rule
+  // through them, and — with one symbol on its own — its price and moment.
+  // The comparison gets a dot per line and leaves the figures to the legend,
+  // where there is room to say which moment each one is.
+  const at = new Map();
+  if (quotes.scrub != null) {
+    for (const s of series) at.set(s.symbol, nearestByFraction(s.pts, quotes.scrub));
+    const sx = focus ? x(at.get(focus.symbol).f) : x(quotes.scrub);
+    svg.append(svgEl('line', { x1: sx, y1: pad.t, x2: sx, y2: H - pad.b, class: 'chart-scrub-line' }));
+    for (const s of series) {
+      const p = at.get(s.symbol);
+      svg.append(svgEl('circle', { cx: focus ? sx : x(p.f), cy: y(p.y), r: 4 + k, class: 'chart-scrub-dot', style: `fill:${colorOf.get(s.symbol)}` }));
+    }
+    if (focus) {
+      const p = at.get(focus.symbol);
+      const nearRight = sx > pad.l + (W - pad.l - pad.r) * 0.62;
+      const anchor = nearRight ? 'end' : 'start';
+      const dx = (nearRight ? -10 : 10) * k;
+      const top = Math.min(Math.max(y(p.y) - 12 * k, pad.t + 12 * k), H - pad.b - 18 * k);
+      const v = svgEl('text', { x: sx + dx, y: top, 'text-anchor': anchor, class: 'chart-scrub-label' });
+      v.textContent = fmtPrice(p.v, focus.q.currency);
+      const d = svgEl('text', { x: sx + dx, y: top + 15 * k, 'text-anchor': anchor, class: 'chart-scrub-date' });
+      d.textContent = fmtMoment(p.t, quotes.range);
+      svg.append(v, d);
+    }
+  }
+
+  // Legend: every live symbol, with its return over the range — or, while
+  // scrubbing, at the scrubbed point, with the moment that point is. Clicking
+  // one focuses it, the same as clicking its card.
+  for (const s of live) {
+    const item = el('div', 'legend-item is-clickable' + (quotes.focus === s.symbol ? ' is-focus' : ''));
+    const sw = el('span', 'legend-swatch');
+    sw.style.background = colorOf.get(s.symbol);
+    item.append(sw, el('span', null, s.label));
+    const p = at.get(s.symbol);
+    if (p) {
+      const base = Number.isFinite(s.q.rangeStart) ? s.q.rangeStart : s.q.points[0][1];
+      item.append(
+        el('span', 'legend-value', fmtPct(base ? ((p.v - base) / base) * 100 : null)),
+        el('span', 'legend-sub', `${fmtPrice(p.v, s.q.currency)} · ${fmtMoment(p.t, quotes.range)}`),
+      );
+    } else {
+      item.append(el('span', 'legend-value', fmtPct(s.q.rangeChangePct)));
+    }
+    item.addEventListener('click', () => { quotes.focus = quotes.focus === s.symbol ? null : s.symbol; renderTickers(); });
+    legend.append(item);
+  }
+
+  renderPerformanceScrubRow(focus, focus ? at.get(focus.symbol) : null);
+}
+
+/** The point whose window fraction is nearest `f`. Points are in time order, so a binary search would do; a scan of a few hundred is fine. */
+function nearestByFraction(pts, f) {
+  let best = pts[0], gap = Infinity;
+  for (const p of pts) {
+    const d = Math.abs(p.f - f);
+    if (d < gap) { gap = d; best = p; }
+  }
+  return best;
+}
+
+/** What the scrub is reading, said under the chart, and the way back. */
+function renderPerformanceScrubRow(focus, point) {
+  const hint = $('perf-scrub-hint');
+  const reset = $('perf-scrub-reset');
+  if (quotes.scrub == null) {
+    hint.textContent = 'Drag the chart to read a moment.';
+    reset.hidden = true;
+    return;
+  }
+  reset.hidden = false;
+  if (focus && point) {
+    hint.textContent = `Reading ${focus.label} at ${fmtMoment(point.t, quotes.range)}.`;
+  } else {
+    hint.textContent = `Reading each line ${Math.round(quotes.scrub * 100)}% of the way through its window — the moment differs per symbol, and the legend says which.`;
+  }
+}
+
+/** A point in time, worded for the resolution the range is drawn at. */
+function fmtMoment(t, range) {
+  const d = new Date(t * 1000);
+  const day = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  if (range === '1d' || range === '1w' || range === '1m') {
+    return `${day} · ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase()}`;
+  }
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+const shortPrice = (v, currency) => {
+  const sym = moneyFor(currency).format(0).replace(/[\d.,\s]+/g, '');
+  const a = Math.abs(v);
+  const body = a >= 1e6 ? `${(a / 1e6).toFixed(2)}M` : a >= 1e4 ? `${Math.round(a / 1e3)}k` : a >= 100 ? a.toFixed(0) : a >= 1 ? a.toFixed(2) : a.toFixed(4);
+  return `${v < 0 ? '−' : ''}${sym}${body}`;
+};
+
+/** Axis ticks for a time span, worded for how long the span is. */
+function timeTicks(t0, t1, range) {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const out = [];
+  const start = new Date(t0 * 1000), end = new Date(t1 * 1000);
+  if (range === '1d') {
+    // On the hour.
+    const d = new Date(start); d.setMinutes(0, 0, 0);
+    for (; d <= end; d.setHours(d.getHours() + 1)) {
+      if (d < start) continue;
+      out.push({ t: d.getTime() / 1000, text: d.toLocaleTimeString('en-US', { hour: 'numeric' }).replace(' ', '').toLowerCase() });
+    }
+  } else if (range === '1w') {
+    const d = new Date(start); d.setHours(0, 0, 0, 0);
+    for (; d <= end; d.setDate(d.getDate() + 1)) {
+      if (d < start) continue;
+      out.push({ t: d.getTime() / 1000, text: DAYS[d.getDay()] });
+    }
+  } else if (range === '1m' || range === '3m') {
+    const step = range === '1m' ? 7 : 14;
+    const d = new Date(start); d.setHours(0, 0, 0, 0);
+    for (; d <= end; d.setDate(d.getDate() + step)) {
+      out.push({ t: d.getTime() / 1000, text: `${MONTHS[d.getMonth()]} ${d.getDate()}` });
+    }
+  } else if (range === '1y') {
+    const d = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+    for (; d <= end; d.setMonth(d.getMonth() + 1)) {
+      out.push({ t: d.getTime() / 1000, text: MONTHS[d.getMonth()] });
+    }
+  } else {
+    const d = new Date(start.getFullYear() + 1, 0, 1);
+    for (; d <= end; d.setFullYear(d.getFullYear() + 1)) {
+      out.push({ t: d.getTime() / 1000, text: String(d.getFullYear()) });
+    }
+  }
+  return out;
+}
+
+/**
+ * The editor. Built once per structural change — a group added or removed —
+ * rather than on every keystroke, so typing never loses the caret. Symbols
+ * are kept as typed until the field is left, then normalised into the list
+ * that config actually stores.
+ */
+function renderWatchlist() {
+  const inv = watchlist();
+  const wrap = $('watchlist-groups');
+  wrap.replaceChildren();
+
+  inv.groups.forEach((group, i) => {
+    const row = el('div', 'watchlist-group');
+
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.value = group.name || '';
+    name.placeholder = 'Group';
+    name.setAttribute('aria-label', 'Group name');
+    name.addEventListener('input', () => {
+      group.name = name.value;
+      watchlistChanged();
+    });
+
+    const symbols = document.createElement('input');
+    symbols.type = 'text';
+    symbols.className = 'watchlist-symbols';
+    symbols.value = (group.symbols || []).join(', ');
+    symbols.placeholder = 'SPY, NVDA, BTC';
+    symbols.setAttribute('aria-label', 'Symbols, comma-separated');
+    symbols.autocapitalize = 'characters';
+    symbols.spellcheck = false;
+    const apply = () => {
+      const typed = symbols.value.split(',').map((t) => t.trim()).filter(Boolean);
+      const kept = splitSymbols(symbols.value).map((s) => s.label);
+      symbols.classList.toggle('is-invalid', kept.length !== typed.length);
+      group.symbols = kept;
+      watchlistChanged();
+    };
+    symbols.addEventListener('input', apply);
+    symbols.addEventListener('change', () => { symbols.value = (group.symbols || []).join(', '); });
+
+    const remove = el('button', 'link-button', '×');
+    remove.type = 'button';
+    remove.title = 'Remove group';
+    remove.addEventListener('click', () => {
+      inv.groups = inv.groups.filter((g) => g !== group);
+      watchlistChanged();
+      renderWatchlist();
+    });
+
+    row.append(name, symbols, remove);
+    wrap.append(row);
+  });
+
+  setIfIdle('in-refresh-seconds', Math.min(3600, Math.max(15, Number(inv.refreshSeconds) || 60)));
+}
+
 // --- wiring -----------------------------------------------------------------
 
 /**
@@ -2202,6 +2778,7 @@ function render() {
   if (state.view === 'expenses') renderExpenses();
   if (state.view === 'assets') renderAssets();
   if (state.view === 'projections') renderProjections();
+  if (state.view === 'investments') renderInvestments(); else stopQuotePolling();
   if (state.view === 'mortgage') {
     const st = mortgageStanding();
     const note = $('mortgage-balance-note');
@@ -2383,6 +2960,40 @@ function wire() {
     renderProjections();
   });
 
+  // The performance chart scrubs by fraction of the plot rather than by date,
+  // since in the comparison every line has its own dates. Redraws the chart
+  // alone: the cards do not change with a scrub, and rebuilding six
+  // sparklines per pointer move would make the drag stutter on a phone.
+  {
+    const chart = $('chart-performance');
+    const setFromPointer = (ev) => {
+      const axis = chart.__axis;
+      if (!axis) return;
+      const box = chart.getBoundingClientRect();
+      if (!box.width) return;
+      const units = ((ev.clientX - box.left) / box.width) * axis.W;
+      const f = Math.min(1, Math.max(0, (units - axis.x0) / (axis.x1 - axis.x0 || 1)));
+      if (quotes.scrub === f) return;
+      quotes.scrub = f;
+      renderPerformance();
+    };
+    chart.addEventListener('pointerdown', (ev) => {
+      setFromPointer(ev);
+      try { chart.setPointerCapture(ev.pointerId); } catch { /* drag ends at the edge */ }
+    });
+    chart.addEventListener('pointermove', (ev) => {
+      if (chart.hasPointerCapture(ev.pointerId)) setFromPointer(ev);
+    });
+    chart.addEventListener('dblclick', () => {
+      quotes.scrub = null;
+      renderPerformance();
+    });
+    $('perf-scrub-reset').addEventListener('click', () => {
+      quotes.scrub = null;
+      renderPerformance();
+    });
+  }
+
   // Projection assumptions. Written onto config as typed, so the charts above
   // move with the figure rather than after a save round-trip.
   const projField = (id, apply) => {
@@ -2420,10 +3031,32 @@ function wire() {
       lastChartWidth = window.innerWidth;
       if (state.view === 'assets') renderAssets();
       else if (state.view === 'projections') renderProjections();
+      else if (state.view === 'investments') renderTickers();
     }, 150);
   });
 
   $('refresh-rate').addEventListener('click', () => refreshMortgageSources());
+
+  $('watchlist-add').addEventListener('click', () => {
+    watchlist().groups.push({ name: '', symbols: [] });
+    queueSave('config');
+    renderWatchlist();
+    // Straight into the new row, since that is the only reason to have added it.
+    const rows = document.querySelectorAll('#watchlist-groups .watchlist-group input[type="text"]');
+    rows[rows.length - 2]?.focus();
+  });
+  $('in-refresh-seconds').addEventListener('input', (ev) => {
+    const v = Number(ev.target.value);
+    if (ev.target.value === '' || !Number.isFinite(v)) return;
+    watchlist().refreshSeconds = Math.min(3600, Math.max(15, Math.round(v)));
+    queueSave('config');
+    if (state.view === 'investments') { startQuotePolling(); renderTickers(); }
+  });
+  // Coming back to a tab that sat hidden through several intervals: fetch now
+  // rather than showing figures from before the phone was locked.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && state.view === 'investments') fetchQuotes();
+  });
 
   $('spend-date').value = today();
   $('oneoff-date').value = today();

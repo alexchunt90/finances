@@ -28,6 +28,7 @@ global.PayDates = require('./public/paydates.js');
 const Model = require('./public/model.js');
 const PayDates = global.PayDates;
 const { createStore, StoreConflict, KEYS: STORE_KEYS } = require('./lib/store.js');
+const Quotes = require('./lib/quotes.js');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -94,6 +95,10 @@ const MIME = {
 // from overwriting each other.
 
 const store = createStore(process.env, STATE_DIR);
+
+// Market quotes for the Investments tab and the tickers widget. QUOTES_URL is
+// for the tests, which point it at a stub so the suite never touches Yahoo.
+const quotes = Quotes.createQuotes({ baseUrl: process.env.QUOTES_URL });
 
 async function readValue(key, fallback) {
   const { value } = await store.read(key);
@@ -476,6 +481,29 @@ const server = http.createServer(async (req, res) => {
       const todayISO = asked && ISO_DATE.test(asked) ? asked : PayDates.todayISO();
       const [config, history] = await Promise.all([readConfig(), readHistory()]);
       return json(res, 200, widgetComposition(config, history, todayISO));
+    }
+
+    // Quotes for the Investments tab. `symbols` is a comma-separated list; left
+    // out, it is the whole watchlist in config. `range` is one of the keys in
+    // lib/quotes.js, defaulting to the last session. Answers come from the
+    // server's cache within each range's TTL, so a page polling every minute
+    // costs one upstream call per symbol per TTL, however many tabs are open.
+    if (pathname === '/api/quotes' && (req.method === 'GET' || req.method === 'HEAD')) {
+      const asked = url.searchParams.get('symbols');
+      const symbols = asked != null && asked.trim() !== '' ? asked : Quotes.watchlistSymbols(await readConfig());
+      return json(res, 200, await quotes.get(symbols, url.searchParams.get('range') || Quotes.DEFAULT_RANGE));
+    }
+
+    // The same, for the tickers widget: fewer points, since a phone-width
+    // sparkline cannot show more than a hundred or so, plus the accent so the
+    // widget can draw in the page's colour. The widget's parameter is the
+    // symbols list; with none, it shows the watchlist.
+    if (pathname === '/api/widget/tickers' && (req.method === 'GET' || req.method === 'HEAD')) {
+      const config = await readConfig();
+      const asked = url.searchParams.get('symbols');
+      const symbols = asked != null && asked.trim() !== '' ? asked : Quotes.watchlistSymbols(config);
+      const payload = await quotes.get(symbols, url.searchParams.get('range') || Quotes.DEFAULT_RANGE, { maxPoints: 80 });
+      return json(res, 200, { ...payload, accent: config.theme?.accent || '#D4AF37' });
     }
 
     if (pathname === '/api/config' && req.method === 'PUT') {

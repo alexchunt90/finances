@@ -316,6 +316,7 @@ section moves to another tab later.
 | **Assets** | `#what-you-have` `#long-term-progress` `#composition` `#events` `#accounts` `#contributions` `#reconciliation` |
 | **Projections** | `#where-the-plan-lands` `#savings-trajectory` `#emergency-recovery` `#buffer-trajectory` `#mortgage-principal` `#projection-assumptions` |
 | **Mortgage** | `#loan-details` `#payment-curves` `#cliffs` `#comparison` `#mortgage-assumptions` |
+| **Investments** | `#tickers` `#performance` `#watchlist` |
 
 Hovering a section heading reveals a `#` link to it; following that puts the
 section's URL in the address bar, which is where it can be copied from.
@@ -332,7 +333,85 @@ section that hides itself — the emergency block outside recovery, the cliffs
 table when there are no cliffs — opens its tab but does not scroll, since there
 is nothing there to scroll to.
 
-## iPhone widget
+## Investments
+
+A watchlist, not a portfolio: prices for the things worth keeping an eye on,
+with nothing about how many of them you own. Balances stay on the Assets tab,
+entered at period close, and the two never mix.
+
+The tab is three sections. **Tickers** is one card per symbol — price, the
+change over the selected range, and a sparkline of it — grouped however the
+watchlist groups them. **Performance** draws every symbol on one chart, each
+rebased to zero at the start of the range, so an ETF at $770 and a coin at
+$80,000 can share an axis; click a card, or a legend entry, to read one
+symbol on its own in price terms. Drag across the chart to read it at a
+moment: on one symbol that is its price and the time, labelled on the line;
+on the comparison it is the same fraction of each line's window — a
+different moment per symbol, which the legend spells out beside each figure.
+Double-click, or *Back to latest*, lets go. **Watchlist** at the bottom is the config:
+groups, with a name and a comma-separated list of symbols each, saved to
+`config.json` like every other edit.
+
+```json
+"investments": {
+  "refreshSeconds": 60,
+  "groups": [
+    { "name": "Index", "symbols": ["SPY", "VFIAX", "EEM"] },
+    { "name": "Alternatives", "symbols": ["GLD", "BTC"] }
+  ]
+}
+```
+
+Symbols are Yahoo Finance tickers, which covers stocks, ETFs, mutual funds
+and crypto in one namespace: `BRK-B`, `^GSPC`, `EURUSD=X`, `GC=F` all work.
+One rule is applied on top. A bare crypto ticker — `BTC`, `ETH`, and the rest
+of the majors — is read as the coin against the dollar, because on Yahoo
+`BTC` itself is a Grayscale ETF and nobody typing it into a watchlist means
+that. Write `BTC-USD` or `BTC-EUR` to say exactly what you want; write the
+ETF's own name to reach it.
+
+The ranges are 24h, 1W, 1M, 3M, 1Y, 3Y and 10Y. Two things about them are
+worth knowing. **24h is the latest session** for anything exchange-traded:
+on a Sunday that is Friday, and the change is against the previous close, the
+way a ticker conventionally reads it. And on the comparison chart, each line
+is drawn across **its own window** rather than a shared clock — a coin trades
+through the weekend and an ETF does not, and on one clock the two would sit a
+day apart with nothing between them. The single-symbol view has one window
+and gets a real time axis.
+
+The page polls while the tab is open and the window is visible, at
+`refreshSeconds`; a tab left in the background stops, and fetches the moment
+it is looked at again. A mutual fund prints once a day, so its 24h sparkline
+is a single point and stays blank.
+
+### Where the prices come from
+
+The server reads Yahoo's chart endpoint, `query1.finance.yahoo.com/v8/finance/chart`,
+which needs no key. It is unofficial — the same endpoint every free finance
+library uses — so everything that could change about it lives in one file,
+[`lib/quotes.js`](lib/quotes.js): the URL, the range table, and the mapping
+from its response to the flat shape the page draws. The browser never talks
+to Yahoo directly.
+
+Answers are cached per symbol and range, for a TTL that grows with the range:
+45 seconds for intraday, an hour for a decade. A page polling every minute
+and a widget on a phone add up to one upstream call per symbol per TTL
+between them, and a symbol Yahoo has never heard of is remembered as such,
+so a typo does not hit upstream once a minute until it is fixed. When Yahoo
+cannot be reached, the last good answer is served and marked `stale`, the
+same way the widgets treat a lost tailnet.
+
+```bash
+curl -s 'http://127.0.0.1:4174/api/quotes?symbols=SPY,NVDA,BTC&range=1w'
+```
+
+`symbols` left out means the whole watchlist. Each quote carries `price`,
+`change` and `changePct` against the previous close, `rangeChange` and
+`rangeChangePct` over the window asked for, and `points` as `[t, v]` pairs
+thinned to a drawing budget. A symbol that failed carries `error` and the
+rest come back whole — a watchlist is not all-or-nothing.
+
+## iPhone widgets
 
 `scriptable/burndown-widget.js` draws the burndown on the home screen, in the
 same colours as the page, and opens the budget view in Chrome when tapped. It
@@ -378,6 +457,37 @@ rather than an error.
 Medium is the size to use — it fits the full stack. Small drops to the total
 alone, since nine bands in 155 points is a smear, and large adds a legend.
 
+### Tickers
+
+`scriptable/tickers-widget.js` puts a row of tickers on the home screen:
+symbol, price, the change over a range, and a sparkline of it. The widget
+**parameter** is the symbols to show, comma-separated, and takes an optional
+range token:
+
+```
+SPY, NVDA, BTC, GLD
+SPY, NVDA, BTC @1w
+```
+
+The token is one of `1d` (the default), `1w`, `1m`, `3m`, `1y`, `3y`, `10y`,
+with or without the `@`. Left empty, the parameter means the watchlist
+configured on the page. Two widgets with two parameters are two lists, each
+with its own offline fallback.
+
+Small holds three rows, medium five with sparklines, large eleven. Tapping
+opens the Investments tab. It reads `api/widget/tickers`, which is
+`api/quotes` with the points thinned further and the page's accent colour
+attached, and which goes through the same cache — a widget refreshing on the
+phone and a tab open on a laptop cost one upstream call between them.
+
+```bash
+curl -s 'http://127.0.0.1:4174/api/widget/tickers?symbols=SPY,BTC&range=1d'
+```
+
+Install it the same way as the others — a Scriptable script named
+**Tickers**, `BASE` set to your own `.ts.net` URL — and set *Parameter* in the
+widget's settings to the symbols.
+
 ## Tests
 
 ```bash
@@ -397,7 +507,8 @@ The suite is mostly a record of things that have actually gone wrong:
 | `test/paydates.test.js` | The 10th/25th rule, the holiday walk-back, and the deposit landing the business day *before* the pay date. Also that every day of a year falls in exactly one period — a gap loses a day's spending, an overlap files it twice |
 | `test/model.test.js` | For nine shapes of period: bands plus cushion equals the total, no band goes negative, and **nothing in the projection increases** — a burndown that goes up is money appearing from nowhere. Plus that a surprise bill never borrows from the planned pool, and that the chart's total agrees with the period settlement |
 | `test/store.test.js` | SigV4 against both of AWS's published vectors, and the conditional writes: create-once, refuse a stale token, and sixteen concurrent writers with nothing clobbered |
-| `test/server.test.js` | Seeding an empty store, the 409 on a stale client, twelve simultaneous period writes all surviving, and that a request cannot climb out of `public/` |
+| `test/server.test.js` | Seeding an empty store, the 409 on a stale client, twelve simultaneous period writes all surviving, and that a request cannot climb out of `public/`. The quote routes run against a stub upstream started by the test, so the suite never depends on a market being open |
+| `test/quotes.test.js` | That `BTC` means the coin and `BTC-USD` typed beside it is not a second card; that the 24h change is against the previous close and not the first intraday print; that one bad symbol does not take the watchlist down; and that the cache holds for the TTL, shares one in-flight request, and serves the last good answer marked stale when upstream is gone |
 
 [`.github/workflows/test.yml`](.github/workflows/test.yml) runs it on Node 18,
 20 and 22 — the floor the tests claim and the version the container ships. A

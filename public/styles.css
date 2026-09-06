@@ -455,7 +455,7 @@ input:focus-visible, select:focus-visible, button:focus-visible {
  * pan-y rather than none: a vertical swipe still scrolls the page, while a
  * horizontal drag across the chart reads a date out of it.
  */
-#chart-history, #chart-composition, #chart-savings-traj {
+#chart-history, #chart-composition, #chart-savings-traj, #chart-performance {
   touch-action: pan-y; cursor: crosshair;
   /* A drag across the chart is a scrub, not a text selection — without this
      the axis labels highlight as the pointer sweeps over them. */
@@ -629,8 +629,79 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   /* Expenses and Assets are tables and charts — they read better full width
      than squeezed into a column. Budget keeps the two-column grid. */
   #view-expenses .block, #view-assets .block,
-  #view-projections .block, #view-mortgage .block { grid-column: 1 / -1; }
+  #view-projections .block, #view-mortgage .block, #view-investments .block { grid-column: 1 / -1; }
 }
+
+/* --- investments --------------------------------------------------------- */
+
+.ticker-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 20px; }
+.range-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.range-buttons .jump-button.is-active { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-wash); }
+
+.ticker-groups { display: grid; gap: 18px; margin-top: 16px; }
+.ticker-group-name {
+  margin: 0 0 8px;
+  font-family: var(--display); font-size: 11px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.ticker-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+
+/* A card is a button: it picks the symbol the performance chart reads alone. */
+.ticker {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "sym price" "name change" "spark spark";
+  gap: 2px 10px;
+  padding: 10px 12px 8px;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.ticker:hover { border-color: var(--accent-dim); }
+.ticker.is-focus { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.ticker.is-error { opacity: 0.7; cursor: default; }
+.ticker-symbol { grid-area: sym; font-family: var(--display); font-size: 15px; font-weight: 700; letter-spacing: 0.06em; color: var(--accent); }
+.ticker-price { grid-area: price; font-family: var(--mono); font-size: 15px; font-weight: 600; text-align: right; }
+.ticker-name { grid-area: name; font-size: 11.5px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ticker-change { grid-area: change; font-family: var(--mono); font-size: 12px; text-align: right; white-space: nowrap; }
+.ticker-change.is-gain { color: var(--gain); }
+.ticker-change.is-cost { color: var(--warn); }
+.ticker-spark { grid-area: spark; margin-top: 6px; }
+.ticker-spark svg { display: block; width: 100%; height: 36px; }
+.spark-line { fill: none; stroke-width: 1.5; stroke: var(--ink-soft); }
+.spark-line.is-gain { stroke: var(--gain); }
+.spark-line.is-cost { stroke: var(--warn); }
+.spark-base { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 3 3; }
+.ticker-stale { font-size: 10.5px; color: var(--warn); }
+
+.legend-item.is-clickable { cursor: pointer; }
+.legend-item.is-clickable:hover { color: var(--ink); }
+.legend-item.is-focus { color: var(--ink); }
+.performance-line { fill: none; stroke-width: 2; }
+.performance-line.is-dim { opacity: 0.22; }
+
+.watchlist-groups { display: grid; gap: 10px; }
+.watchlist-group {
+  display: grid; grid-template-columns: 180px 1fr auto; gap: 10px; align-items: center;
+}
+.watchlist-group input[type="text"] {
+  width: 100%; font-family: var(--body); font-size: 14px; padding: 6px 8px;
+  border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--card-sunk); color: var(--ink);
+}
+.watchlist-group input.watchlist-symbols { font-family: var(--mono); text-transform: uppercase; }
+.watchlist-group input.is-invalid { border-color: var(--warn); }
+.watchlist-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 14px; }
+.watchlist-refresh { font-size: 13px; color: var(--ink-soft); display: flex; align-items: center; gap: 6px; }
+.watchlist-refresh input[type="number"] {
+  width: 76px; padding: 4px 7px; font-size: 13px; font-family: var(--mono); text-align: right;
+  background: var(--card-sunk); color: var(--ink); border: 1px solid var(--rule); border-radius: var(--radius);
+}
+.block-note code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
 
 /* --- narrow screens ------------------------------------------------------ */
 /* Kept at the end of the file: these override base rules defined further up,
@@ -658,4 +729,12 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   }
   .chip { min-width: 0; }
   .chip-value { overflow-wrap: anywhere; }
+
+  /* Name and the remove button share the first row; the symbols get a row
+     of their own, since a comma-separated list needs the width. Placed
+     explicitly — auto-placement would put the button on a third row. */
+  .watchlist-group { grid-template-columns: 1fr auto; }
+  .watchlist-group .watchlist-symbols { grid-row: 2; grid-column: 1 / -1; }
+  .watchlist-group .link-button { grid-row: 1; grid-column: 2; }
+  .ticker-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 }

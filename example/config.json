@@ -514,6 +514,15 @@
     "_paletteComment": "Composition chart. Cool shades for illiquid accounts, warm shades for liquid ones, each assigned in order.",
     "_comment": "Headline and chart colour. Any hex value works - the app derives a translucent wash and a dim variant from it at load. Backgrounds stay black and near-black; body text stays white."
   },
+  "investments": {
+    "_comment": "The Investments tab. Groups are display order; symbols are Yahoo Finance tickers. Bare crypto tickers (BTC, ETH) map to their USD pair. refreshSeconds is how often the open tab re-asks the server.",
+    "refreshSeconds": 60,
+    "groups": [
+      { "name": "Index", "symbols": ["SPY", "VFIAX", "EEM"] },
+      { "name": "Single names", "symbols": ["NVDA"] },
+      { "name": "Alternatives", "symbols": ["GLD", "BTC"] }
+    ]
+  },
   "sources": {
     "mortgage.refinance.baseRate": {
       "provider": "fred",

@@ -4,8 +4,24 @@
     {
       "name": "budget",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["server.js"],
+      "runtimeArgs": [
+        "server.js"
+      ],
       "port": 4174
+    },
+    {
+      "name": "budget-scratch",
+      "_comment": "The app against throwaway state: seeded from example/, never the bucket .env points at.",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "S3_BUCKET=",
+        "STATE_DIR=/tmp/finances-scratch-state",
+        "PORT=4179",
+        "HOST=127.0.0.1",
+        "node",
+        "server.js"
+      ],
+      "port": 4179
     }
   ]
 }

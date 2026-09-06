@@ -1,0 +1,86 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel a run that a newer push has already made irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor the tests claim to run on, and the version the container
+        # actually ships. Both, so neither drifts unnoticed.
+        node: ['18', '20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # No install step: the project has no dependencies and the tests run on
+      # node:test, which ships with Node.
+      - name: Test
+        run: npm test
+
+  # The suite exercises the app's own arithmetic. This checks the thing the
+  # tests cannot: that nothing personal has crept back into the repository.
+  no-private-data:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: State files must stay untracked
+        run: |
+          # Checked one at a time: --error-unmatch over several paths at once
+          # fails as soon as any one of them is missing, which would let a
+          # tracked config.json through beside an untracked data/.
+          failed=0
+          for path in config.json data; do
+            if git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+              echo "::error::$path is tracked — it holds real balances and must stay out of the repository"
+              failed=1
+            fi
+          done
+          [ "$failed" -eq 0 ] || exit 1
+          echo "config.json and data/ are untracked, as they should be"
+
+      - name: No credentials or private hostnames
+        run: |
+          patterns='AKIA[0-9A-Z]{16}|aws_secret_access_key|-----BEGIN [A-Z ]*PRIVATE KEY-----|\.ts\.net'
+          # .env.example and the README describe these by name on purpose; the
+          # widgets carry a YOUR-HOST placeholder.
+          if git grep -nIE "$patterns" -- . ':!.env.example' ':!README.md' | grep -v 'YOUR-HOST'; then
+            echo "::error::something that looks like a credential or a private hostname is committed"
+            exit 1
+          fi
+          echo "no credentials or tailnet hostnames found"
+
+      - name: The example data must be example data
+        run: |
+          node -e "
+            const fs = require('fs');
+            const cfg = JSON.parse(fs.readFileSync('example/config.json', 'utf8'));
+            const round = (n) => Number.isInteger(n);
+            const takeHome = cfg.income.takeHomePerPeriod;
+            if (!round(takeHome)) {
+              console.error('::error::example take-home is ' + takeHome + ' — example figures should be round, not real');
+              process.exit(1);
+            }
+            console.log('example take-home is ' + takeHome + ', which reads as made up');
+          "

@@ -1,0 +1,15 @@
+{
+  "name": "finances",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A local, single-user budgeting and mortgage app.",
+  "license": "MIT",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "_comment": "No dependencies, and none are wanted. The tests run on node:test, which ships with Node — so `npm install` has nothing to do and `npm test` needs nothing installed.",
+  "engines": {
+    "node": ">=18"
+  }
+}

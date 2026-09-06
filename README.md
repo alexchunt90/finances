@@ -376,6 +376,33 @@ rather than an error.
 Medium is the size to use — it fits the full stack. Small drops to the total
 alone, since nine bands in 155 points is a smear, and large adds a legend.
 
+## Tests
+
+```bash
+npm test
+```
+
+No install step — the suite runs on `node:test`, which ships with Node, so the
+project still has no dependencies. Every test builds its own state in a
+temporary directory from `example/`, and the server tests spawn the server with
+`S3_BUCKET` explicitly emptied, so running them can never read or write real
+state on a machine that is configured against a bucket.
+
+The suite is mostly a record of things that have actually gone wrong:
+
+| | |
+|---|---|
+| `test/paydates.test.js` | The 10th/25th rule, the holiday walk-back, and the deposit landing the business day *before* the pay date. Also that every day of a year falls in exactly one period — a gap loses a day's spending, an overlap files it twice |
+| `test/model.test.js` | For nine shapes of period: bands plus cushion equals the total, no band goes negative, and **nothing in the projection increases** — a burndown that goes up is money appearing from nowhere. Plus that a surprise bill never borrows from the planned pool, and that the chart's total agrees with the period settlement |
+| `test/store.test.js` | SigV4 against both of AWS's published vectors, and the conditional writes: create-once, refuse a stale token, and sixteen concurrent writers with nothing clobbered |
+| `test/server.test.js` | Seeding an empty store, the 409 on a stale client, twelve simultaneous period writes all surviving, and that a request cannot climb out of `public/` |
+
+[`.github/workflows/test.yml`](.github/workflows/test.yml) runs it on Node 18,
+20 and 22 — the floor the tests claim and the version the container ships. A
+second job checks what the tests cannot: that `config.json` and `data/` are
+still untracked, that nothing resembling a credential or a tailnet hostname has
+been committed, and that the example figures still read as made up.
+
 ## Files
 
 | | |
@@ -387,6 +414,7 @@ alone, since nine bands in 155 points is a smear, and large adds a legend.
 | `public/app.js` | Views and charts |
 | `lib/store.js` | State on disk or in a bucket, and the conditional writes |
 | `example/` | Stub data, seeded into an empty store on first run |
+| `test/` | The suite, run by `npm test` |
 | `deploy/iam-policy.json` | The least the app's S3 credentials can get away with |
 | `scriptable/burndown-widget.js` | The iPhone home-screen widget |
 

@@ -885,13 +885,7 @@ function renderBudget() {
     (overCats.length
       ? `${overCats.map((r) => `${r.name} is ${fmt.usd(r.overage)} over`).join(', ')}.`
       : `Nothing is over its category budget yet.`);
-  // Today counts. `days.elapsed` is completed days — the figure proration is
-  // built on, since today's allowance is not earned until the day is done —
-  // but as a position in the period it reads a day behind, and disagrees with
-  // the burndown axis where today is a column of its own. Closed periods need
-  // no adjustment: projected equals elapsed, so the min leaves them alone.
-  const dayOfPeriod = Math.min(days.projected, days.elapsed + 1);
-  $('stat-day').textContent = `${dayOfPeriod} / ${days.projected}`;
+  $('stat-day').textContent = `${days.current} / ${days.projected}`;
   // Split the same way the two pools are: spending that fits inside a category
   // budget draws on planned, anything past it — plus surprise bills — draws on
   // unplanned. The two add up to everything logged this period.
@@ -899,7 +893,7 @@ function renderBudget() {
   $('stat-unplanned-spend').textContent = fmt.usd(Model.round2(pace.overage + settlement.surprises));
   $('stat-projected').textContent = pace.reliable ? fmt.usd(pace.projected) : '—';
   $('stat-oneoff').textContent = fmt.usd(settlement.surprises);
-  $('period-bar-fill').style.width = `${Math.min(100, (dayOfPeriod / days.projected) * 100)}%`;
+  $('period-bar-fill').style.width = `${Math.min(100, (days.current / days.projected) * 100)}%`;
 
   const over = Model.round2(pace.projected - pace.budget);
   $('verdict').innerHTML = !pace.reliable
@@ -2190,7 +2184,7 @@ function renderMasthead() {
     $('chip-left').textContent = fmt.usd(left);
     $('chip-left-wrap').classList.toggle('is-warn', left < 0);
     $('period-caption').textContent =
-      `Period ${fmt.day(period.start)} – ${fmt.day(period.scheduledEnd)} · day ${days.elapsed} of ${days.projected}` +
+      `Period ${fmt.day(period.start)} – ${fmt.day(period.scheduledEnd)} · day ${days.current} of ${days.projected}` +
       (days.late ? ' · closing late' : '');
   } finally {
     paintingMasthead = false;

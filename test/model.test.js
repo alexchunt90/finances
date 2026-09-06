@@ -142,6 +142,43 @@ describe('burndown', () => {
   });
 });
 
+describe('the day of the period', () => {
+  test('counts today, unlike elapsed which counts days behind it', () => {
+    // The masthead once said "day 7 of 16" beside a readout saying "8 / 16",
+    // because one used elapsed and the other elapsed + 1. There is one
+    // definition now, and everything that says "day N" reads it.
+    const { days } = scenario({});
+    assert.equal(days.current, days.elapsed + 1);
+    assert.ok(days.current >= 1);
+  });
+
+  test('the burndown puts today on the same day the readouts do', () => {
+    for (const todayISO of ['2026-08-24', '2026-08-26', '2026-08-31', '2026-09-08']) {
+      const { days, burndown } = scenario({ todayISO });
+      assert.equal(burndown.todayDay, days.current, `disagreed on ${todayISO}`);
+    }
+  });
+
+  test('it never runs past the end of the period', () => {
+    // On and after the last day it pins to the last day rather than counting
+    // into a day that does not exist.
+    for (const todayISO of ['2026-09-08', '2026-09-09', '2026-09-20']) {
+      const { days } = scenario({ todayISO });
+      assert.ok(days.current <= days.projected, `${todayISO}: ${days.current} of ${days.projected}`);
+    }
+  });
+
+  test('a closed period sits on its final day, not one past it', () => {
+    const { config, periods } = scenario({});
+    const period = periods.find((p) => p.status !== 'closed');
+    const closed = { ...period, closedOn: '2026-09-09' };
+    const days = Model.periodDays(closed, '2026-09-20');
+    assert.equal(days.current, days.projected);
+    assert.equal(days.elapsed, days.projected, 'and elapsed agrees, so the min leaves it alone');
+    assert.ok(config);
+  });
+});
+
 describe('proration', () => {
   test('a monthly figure is spread by the days the period actually ran', () => {
     near(Model.prorate(Model.DAYS_PER_MONTH, Model.DAYS_PER_MONTH), Model.DAYS_PER_MONTH, 'a full month is itself');

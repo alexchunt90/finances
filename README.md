@@ -1,5 +1,7 @@
 # Finances
 
+[![test](https://github.com/alexchunt90/finances/actions/workflows/test.yml/badge.svg)](https://github.com/alexchunt90/finances/actions/workflows/test.yml)
+
 A local, single-user budgeting and mortgage app. Goal: **save more each pay period.**
 
 Same shape as `refi_calc` — no dependencies, no build step, all arithmetic in the

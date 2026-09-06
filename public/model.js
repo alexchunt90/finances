@@ -178,7 +178,15 @@ const Model = (() => {
     // Floored at 1 so a per-day figure on the final day divides by a day, not
     // by zero.
     const remaining = Math.max(1, projected - elapsed);
-    return { elapsed, scheduled, projected, remaining, late: elapsed > scheduled };
+    // Which day of the period today *is*, as opposed to how many are behind it.
+    // `elapsed` counts completed days, because today's allowance is not earned
+    // until the day is done, and every prorated figure is built on that. But as
+    // a position it reads a day behind — on the first afternoon you are in day
+    // one, not day zero — so anything that says "day N of M" wants this one. A
+    // closed period needs no adjustment: projected equals elapsed, and the min
+    // leaves it alone.
+    const current = Math.min(projected, elapsed + 1);
+    return { elapsed, scheduled, projected, remaining, current, late: elapsed > scheduled };
   }
 
   /** Where each variable target stands, and where this pace lands by close. */
@@ -236,8 +244,7 @@ const Model = (() => {
     const days = periodDays(period, todayISO);
     const n = days.projected;
     const p = pace(cfg, period, todayISO);
-    // Today is the day after the last fully elapsed one.
-    const todayDay = Math.min(n, days.elapsed + 1);
+    const todayDay = days.current;
 
     const blank = () => new Array(n + 2).fill(0);
     const dayOf = (iso) =>

@@ -37,14 +37,15 @@ const BASE = 'https://YOUR-HOST.ts.net/finances/';
 // and it keeps working if the form ever moves to another tab.
 const SECTION = 'log-spending';
 
-// Chrome's own scheme, so the tap lands in Chrome whether or not it is the
-// system default browser. `googlechromes` is the https variant — plain
-// `googlechrome` is http, and would be downgraded on arrival.
-const OPEN_URL = `googlechromes://${BASE.replace(/^https?:\/\//, '')}#${SECTION}`;
+// A plain https link, so iOS opens it in whichever browser is set as default.
+const OPEN_URL = `${BASE}#${SECTION}`;
 
-// How long iOS should wait before asking for fresh figures. A suggestion, not
-// a promise — the system budgets widget refreshes and will stretch it.
-const REFRESH_MINUTES = 30;
+// How long iOS should wait before asking for fresh figures. A request, not a
+// promise: WidgetKit budgets refreshes across the day and will stretch this,
+// often to twice it or more. Asking for less than you want costs nothing and
+// is the only lever there is — so the footer prints how old the figures
+// actually are rather than implying they are current.
+const REFRESH_MINUTES = 15;
 
 // --- palette ----------------------------------------------------------------
 // styles.css, so the widget and the page read as the same thing.
@@ -337,10 +338,24 @@ function buildWidget(data, stale) {
   line.minimumScaleFactor = 0.7;
   if (!small) {
     foot.addSpacer();
-    // A stale reading is labelled rather than passed off as current.
-    const mark = foot.addText(stale ? `stale · ${data.asOf}` : timeOf(data.generatedAt));
-    mark.font = Font.systemFont(9);
-    mark.textColor = stale ? WARN : INK_FAINT;
+    // How old the figures are, which is the honest thing to show when iOS
+    // decides how often this redraws.
+    //
+    // As a date rather than a string: a rendered timestamp is frozen at the
+    // moment it was drawn, so it would read "just now" for as long as the
+    // widget sat unrefreshed — the one moment it most needs to say otherwise.
+    // In relative style iOS keeps the figure counting up on its own, without
+    // spending a refresh to do it.
+    if (stale) {
+      const mark = foot.addText(`stale · ${data.asOf}`);
+      mark.font = Font.systemFont(9);
+      mark.textColor = WARN;
+    } else {
+      const mark = foot.addDate(new Date(data.generatedAt));
+      mark.applyRelativeStyle();
+      mark.font = Font.systemFont(9);
+      mark.textColor = INK_FAINT;
+    }
   }
 
   if (data.provisional) {
@@ -387,14 +402,6 @@ function legend(w, data) {
     col.addSpacer();
   }
 }
-
-const timeOf = (iso) => {
-  const d = new Date(iso);
-  const df = new DateFormatter();
-  df.useNoDateStyle();
-  df.useShortTimeStyle();
-  return df.string(d);
-};
 
 // --- run --------------------------------------------------------------------
 

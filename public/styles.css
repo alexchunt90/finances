@@ -683,6 +683,14 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .legend-item.is-focus { color: var(--ink); }
 .performance-line { fill: none; stroke-width: 2; }
 .performance-line.is-dim { opacity: 0.22; }
+/* Names each line where it ends, in the line's colour; the extremes sit on
+   the line itself, so both carry a halo to stay readable over it. */
+.chart-end-label, .chart-extreme-label {
+  font-family: var(--mono); font-size: calc(11px * var(--chart-k, 1)); font-weight: 600;
+  paint-order: stroke; stroke: var(--card-sunk); stroke-width: calc(3px * var(--chart-k, 1)); stroke-linejoin: round;
+}
+.chart-extreme-label { fill: var(--ink-soft); font-weight: 500; }
+.chart-extreme-dot { stroke: var(--card-sunk); stroke-width: 1.5; }
 
 .watchlist-groups { display: grid; gap: 10px; }
 .watchlist-group {

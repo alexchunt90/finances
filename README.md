@@ -343,8 +343,12 @@ The tab is three sections. **Tickers** is one card per symbol — price, the
 change over the selected range, and a sparkline of it — grouped however the
 watchlist groups them. **Performance** draws every symbol on one chart, each
 rebased to zero at the start of the range, so an ETF at $770 and a coin at
-$80,000 can share an axis; click a card, or a legend entry, to read one
-symbol on its own in price terms. Drag across the chart to read it at a
+$80,000 can share an axis. Each line is named where it ends, in its own
+colour, with its return over the range; on a phone the name alone, since the
+type there is scaled up and the legend has the figure. Click a card, or a
+legend entry, to read one symbol on its own in price terms, with its latest
+price at the end of the line and its high and low marked where they fell.
+Drag across the chart to read it at a
 moment: on one symbol that is its price and the time, labelled on the line;
 on the comparison it is the same fraction of each line's window — a
 different moment per symbol, which the legend spells out beside each figure.

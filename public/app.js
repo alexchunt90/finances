@@ -2470,7 +2470,16 @@ function renderPerformance() {
 
   const W = 760, H = 340;
   const k = chartScale(svg, W);
-  const pad = { l: 14 + 52 * k, r: 16, t: 14 * k, b: 16 + 18 * k };
+  const narrow = k > 1.3;
+  // Each line ends in a label, and the labels live in the right gutter, so
+  // the gutter is sized to the longest of them. On a phone the type is
+  // counter-scaled up and the full label would eat a quarter of the plot, so
+  // there the label is the symbol alone and the legend carries the figure.
+  const endLabel = (s) => (focus
+    ? fmtPrice(s.q.price, s.q.currency)
+    : narrow ? s.label : `${s.label} ${fmtPct(s.q.rangeChangePct)}`);
+  const labelW = Math.max(...drawn.map((s) => endLabel(s).length)) * 6.6 * k + 10 * k;
+  const pad = { l: 14 + 52 * k, r: 12 + labelW, t: 14 * k, b: 16 + 18 * k };
 
   // Each series as drawn: x is the fraction of its own window, y a percentage
   // from the range start — or the price itself when one symbol is on its own.
@@ -2519,6 +2528,43 @@ function renderPerformance() {
       svg.append(svgEl('path', { d: `${d} L${x(1).toFixed(1)},${baseY.toFixed(1)} L${x(0).toFixed(1)},${baseY.toFixed(1)} Z`, class: 'series-area' }));
     }
     svg.append(svgEl('path', { d, class: 'performance-line', style: `stroke:${colorOf.get(s.symbol)}` }));
+  }
+
+  // Data labels. Every line is named where it ends, in its own colour, with
+  // its return over the range — the answer the chart exists to give, read
+  // without a trip to the legend. Labels that would land on top of each other
+  // are spread apart, in order, so a cluster of index funds stays legible.
+  const gap = 13 * k;
+  const ends = spreadLabels(series.map((s) => ({ s, y: y(s.pts[s.pts.length - 1].y) })), gap, pad.t + 6 * k, H - pad.b - 4 * k);
+  for (const { s, y: ly } of ends) {
+    const t = svgEl('text', { x: W - pad.r + 6 * k, y: ly + 4 * k, 'text-anchor': 'start', class: 'chart-end-label', style: `fill:${colorOf.get(s.symbol)}` });
+    t.textContent = endLabel(s);
+    svg.append(t);
+  }
+
+  // One symbol on its own also gets its high and low over the range, marked
+  // on the line — where they fell says more than the two figures alone.
+  if (focus) {
+    const s = series[0];
+    let hiP = s.pts[0], loP = s.pts[0];
+    for (const p of s.pts) { if (p.v > hiP.v) hiP = p; if (p.v < loP.v) loP = p; }
+    const last = s.pts[s.pts.length - 1];
+    for (const [p, kind] of [[hiP, 'high'], [loP, 'low']]) {
+      // The high or low is often the latest point, already labelled at the end.
+      if (p === last) continue;
+      const px = x(p.f), py = y(p.y);
+      svg.append(svgEl('circle', { cx: px, cy: py, r: 3 + k, class: 'chart-extreme-dot', style: `fill:${colorOf.get(s.symbol)}` }));
+      // Above the high, below the low; anchored away from the nearer edge.
+      const nearRight = p.f > 0.7;
+      const t = svgEl('text', {
+        x: px + (nearRight ? -8 : 8) * k,
+        y: kind === 'high' ? Math.max(py - 8 * k, pad.t + 10 * k) : Math.min(py + 14 * k, H - pad.b - 4 * k),
+        'text-anchor': nearRight ? 'end' : 'start',
+        class: 'chart-extreme-label',
+      });
+      t.textContent = `${kind} ${fmtPrice(p.v, s.q.currency)}`;
+      svg.append(t);
+    }
   }
 
   const tickY = H - pad.b + 4 + 14 * k;
@@ -2590,6 +2636,23 @@ function renderPerformance() {
   }
 
   renderPerformanceScrubRow(focus, focus ? at.get(focus.symbol) : null);
+}
+
+/**
+ * Push labels apart until none overlaps, keeping their order and staying
+ * inside [lo, hi]. A forward pass resolves collisions downward; if that runs
+ * off the bottom, a backward pass lifts the stack back up.
+ */
+function spreadLabels(items, gap, lo, hi) {
+  const out = items.map((it) => ({ ...it })).sort((a, b) => a.y - b.y);
+  for (let i = 0; i < out.length; i++) {
+    out[i].y = Math.max(out[i].y, lo, i ? out[i - 1].y + gap : -Infinity);
+  }
+  if (out.length && out[out.length - 1].y > hi) {
+    out[out.length - 1].y = hi;
+    for (let i = out.length - 2; i >= 0; i--) out[i].y = Math.min(out[i].y, out[i + 1].y - gap);
+  }
+  return out;
 }
 
 /** The point whose window fraction is nearest `f`. Points are in time order, so a binary search would do; a scan of a few hundred is fine. */

@@ -245,6 +245,7 @@ function applyTheme(theme) {
 // --- persistence ------------------------------------------------------------
 
 let saveTimer = null;
+let saving = null;
 const pending = new Set();
 
 function status(text) { $('save-status').textContent = text; }
@@ -263,39 +264,69 @@ function queueSave(what) {
   renderMasthead();
 }
 
-async function flush() {
-  const jobs = [...pending];
-  pending.clear();
-  try {
-    for (const what of jobs) {
-      if (what === 'config') {
-        const res = await request('api/config', 'PUT', state.config);
-        state.config.version = res.version;
-      } else if (what === 'history') {
-        const res = await request('api/history/events', 'PUT', {
-          version: state.history.version,
-          events: state.history.events,
-        });
-        state.history.version = res.version;
-      } else {
-        const period = state.periods.find((p) => p.id === what);
-        if (period) {
-          const res = await request(`api/periods/${period.id}`, 'PUT', period);
-          period.version = res.version;
+/**
+ * One save in flight at a time. Every write echoes back the version it was
+ * loaded with, so two overlapping PUTs both quote the same one: the second is
+ * refused as a conflict created by the first, which had not reported its new
+ * version back yet. Typing a column of balances is quick enough, and the store
+ * far enough away, to hit that on every other keystroke — and the reload a
+ * conflict triggers rebuilds the form under whoever is typing.
+ *
+ * Anything queued while a save is running is picked up by the loop below when
+ * it comes back round, rather than racing the save already out.
+ */
+function flush() {
+  if (saving) return saving;
+  saving = drain().finally(() => { saving = null; });
+  return saving;
+}
+
+async function drain() {
+  while (pending.size) {
+    // Worked through as a queue rather than a list, so a failure partway knows
+    // which jobs it never got to.
+    const jobs = [...pending];
+    pending.clear();
+    try {
+      while (jobs.length) {
+        const what = jobs[0];
+        if (what === 'config') {
+          const res = await request('api/config', 'PUT', state.config);
+          state.config.version = res.version;
+        } else if (what === 'history') {
+          const res = await request('api/history/events', 'PUT', {
+            version: state.history.version,
+            events: state.history.events,
+          });
+          state.history.version = res.version;
+        } else {
+          const period = state.periods.find((p) => p.id === what);
+          if (period) {
+            const res = await request(`api/periods/${period.id}`, 'PUT', period);
+            period.version = res.version;
+          }
         }
+        jobs.shift();
       }
-    }
-    status('saved');
-    setTimeout(() => { if (!pending.size) status(''); }, 1600);
-  } catch (err) {
-    status('');
-    if (err.status === 409) {
-      notice(`${err.message}. Reloaded from disk — your last edit was not saved.`);
-      await reloadState().catch(() => {});
-    } else {
-      notice(`Could not save: ${err.message}`);
+    } catch (err) {
+      status('');
+      if (err.status === 409) {
+        // Whatever is still queued was written against the state that is about
+        // to be thrown away, so it goes with it instead of conflicting again.
+        pending.clear();
+        notice(`${err.message}. Reloaded from disk — your last edit was not saved.`);
+        await reloadState().catch(() => {});
+      } else {
+        // Hold on to what did not go, so the next edit carries it out rather
+        // than it disappearing without a trace.
+        for (const what of jobs) pending.add(what);
+        notice(`Could not save: ${err.message}`);
+      }
+      return;
     }
   }
+  status('saved');
+  setTimeout(() => { if (!pending.size) status(''); }, 1600);
 }
 
 async function request(url, method, body) {
@@ -1106,67 +1137,117 @@ function removeCell(onClick) {
   return td;
 }
 
+/**
+ * Recount the gate without rebuilding the table. A keystroke can change only
+ * these two things, so it is kept apart from the render — redrawing the rows
+ * on every character would replace the input being typed into.
+ */
+function updateCloseGate() {
+  const period = openPeriod();
+  const live = state.config.accounts.filter((a) => !a.retired);
+  const n = live.filter((a) => {
+    const v = period.balances?.[a.id];
+    return v != null && v !== '';
+  }).length;
+  $('close-progress').textContent = `${n} of ${live.length} balances entered`;
+  $('close-period').disabled = n !== live.length;
+}
+
+/**
+ * The rows outlive the renders that fill them, keyed by account. A render that
+ * rebuilt them would take the field being typed into with it — which is what a
+ * reload after a save conflict used to do, dropping focus and every character
+ * entered since. Only a change to the accounts themselves rebuilds.
+ */
+const closeRows = new Map();
+
+/** A row restated from the period: the figure entered, and how far it moved. */
+function fillCloseRow(row, accountId, period) {
+  const value = period.balances?.[accountId];
+  row.input.value = value != null ? value : '';
+  const delta = value != null && row.prev != null ? Model.round2(value - row.prev) : null;
+  row.deltaCell.textContent = delta != null ? fmt.signed(delta) : '—';
+}
+
+function buildCloseRow(account) {
+  const tr = el('tr');
+  tr.append(el('td', null, account.name));
+  const kind = el('td');
+  kind.append(el('span', `flag ${account.volatile ? 'warn' : 'soft'}`, account.volatile ? 'volatile' : 'stable'));
+  if (!account.liquid) kind.append(el('span', 'flag soft', ' · illiquid'));
+  tr.append(kind);
+  const prevCell = el('td', 'r', '—');
+  tr.append(prevCell);
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.step = '0.01';
+  input.placeholder = 'enter';
+  const inputCell = el('td', 'r');
+  inputCell.append(input);
+  tr.append(inputCell);
+
+  const deltaCell = el('td', 'r', '—');
+  tr.append(deltaCell);
+
+  const row = { tr, prevCell, input, deltaCell, prev: null };
+
+  // Leaving the field gives up the exemption below: whatever is stored is what
+  // the form goes back to stating. Without this a reload that landed while the
+  // field was being typed into would leave it showing digits nothing holds.
+  input.addEventListener('blur', () => fillCloseRow(row, account.id, openPeriod()));
+
+  input.addEventListener('input', () => {
+    // The period as it stands now, not the one that was open when the row was
+    // built: a reload after a conflict replaces the period objects wholesale,
+    // and a row still writing into the old one would write into nothing.
+    const open = openPeriod();
+    open.balances = open.balances || {};
+    if (input.value === '') delete open.balances[account.id];
+    else open.balances[account.id] = Number(input.value);
+    queueSave(open.id);
+    const v = open.balances[account.id];
+    deltaCell.textContent = v != null && row.prev != null ? fmt.signed(Model.round2(v - row.prev)) : '—';
+    updateCloseGate();
+  });
+
+  return row;
+}
+
 /** Balance entry. Closing needs every account, so the count is shown as you go. */
 function renderClose(period, prevBalances) {
   const cfg = state.config;
   const body = $('close-rows');
-  body.replaceChildren();
 
   const live = cfg.accounts.filter((a) => !a.retired);
 
-  /**
-   * Recount the gate without rebuilding the table. Re-rendering on every
-   * keystroke would replace the input being typed into and drop focus, so
-   * the handler below touches only the two things a keystroke can change.
-   */
-  const updateGate = () => {
-    const n = live.filter((a) => {
-      const v = period.balances?.[a.id];
-      return v != null && v !== '';
-    }).length;
-    $('close-progress').textContent = `${n} of ${live.length} balances entered`;
-    $('close-period').disabled = n !== live.length;
-  };
-
-  for (const a of live) {
-    const value = period.balances?.[a.id];
-    const prev = prevBalances[a.id];
-
-    const tr = el('tr');
-    tr.append(el('td', null, a.name));
-    const kind = el('td');
-    kind.append(el('span', `flag ${a.volatile ? 'warn' : 'soft'}`, a.volatile ? 'volatile' : 'stable'));
-    if (!a.liquid) kind.append(el('span', 'flag soft', ' · illiquid'));
-    tr.append(kind);
-    tr.append(el('td', 'r', prev != null ? fmt.usd(prev) : '—'));
-
-    const input = document.createElement('input');
-    input.type = 'number';
-    input.step = '0.01';
-    input.value = value != null ? value : '';
-    input.placeholder = 'enter';
-    const inputCell = el('td', 'r');
-    inputCell.append(input);
-    tr.append(inputCell);
-
-    const delta = value != null && prev != null ? Model.round2(value - prev) : null;
-    const deltaCell = el('td', 'r', delta != null ? fmt.signed(delta) : '—');
-    tr.append(deltaCell);
-
-    input.addEventListener('input', () => {
-      period.balances = period.balances || {};
-      if (input.value === '') delete period.balances[a.id];
-      else period.balances[a.id] = Number(input.value);
-      queueSave(period.id);
-      const v = period.balances[a.id];
-      deltaCell.textContent = v != null && prev != null ? fmt.signed(Model.round2(v - prev)) : '—';
-      updateGate();
-    });
-
-    body.append(tr);
+  // Everything a row states about its account, so renaming one or retiring it
+  // still redraws — and nothing else does.
+  const shape = JSON.stringify(live.map((a) => [a.id, a.name, !!a.volatile, !!a.liquid]));
+  if (body.dataset.accounts !== shape) {
+    body.replaceChildren();
+    closeRows.clear();
+    for (const a of live) {
+      const row = buildCloseRow(a);
+      closeRows.set(a.id, row);
+      body.append(row.tr);
+    }
+    body.dataset.accounts = shape;
   }
 
-  updateGate();
+  for (const a of live) {
+    const row = closeRows.get(a.id);
+    const prev = prevBalances[a.id];
+
+    row.prev = prev != null ? prev : null;
+    row.prevCell.textContent = prev != null ? fmt.usd(prev) : '—';
+    // Every row but the one under the cursor. Half-typed digits are worth more
+    // than agreement with a figure that is about to be saved anyway, and the
+    // blur above collects the field again on the way out.
+    if (document.activeElement !== row.input) fillCloseRow(row, a.id, period);
+  }
+
+  updateCloseGate();
   renderMortgageField(period);
 
   const days = Model.periodDays(period, today());

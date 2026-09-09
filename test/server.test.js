@@ -73,6 +73,15 @@ before(async () => {
     if (Date.now() > deadline) throw new Error(`server did not start:\n${banner}`);
     await new Promise((r) => setTimeout(r, 50));
   }
+
+  // The port is up, but the banner is not finished — the store and seeding
+  // lines print after the address, and a test that reads them was racing the
+  // pipe. Waiting for stdout to fall quiet rather than for any one line, since
+  // which lines appear at all depends on how the store came up.
+  for (let seen = banner.length, still = 0; still < 6 && Date.now() < deadline; still++) {
+    await new Promise((r) => setTimeout(r, 25));
+    if (banner.length !== seen) { seen = banner.length; still = -1; }
+  }
 });
 
 after(async () => {

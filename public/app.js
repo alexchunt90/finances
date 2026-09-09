@@ -849,6 +849,13 @@ function barChart(svg, bars) {
 
   // Eight date labels fit on a laptop; at phone type they would run together.
   const every = Math.ceil(bars.length / Math.max(2, Math.round(8 / k)));
+  // A figure on every bar once they are wide enough to hold one — six mono
+  // characters, which is what a five-digit sum comes to. Below that width the
+  // labels would collide, so only the best and worst period keep theirs: the
+  // pair worth reading off a column too narrow to label bar by bar.
+  const labelAll = bw >= 46 * k;
+  const highest = bars.reduce((best, b, i) => (b.value > bars[best].value ? i : best), 0);
+  const lowest = bars.reduce((worst, b, i) => (b.value < bars[worst].value ? i : worst), 0);
   bars.forEach((b, i) => {
     const top = y(Math.max(b.value, 0));
     const h = Math.abs(y(b.value) - y(0));
@@ -857,6 +864,16 @@ function barChart(svg, bars) {
       width: bw * 0.64, height: Math.max(1, h),
       class: `bar${b.value < 0 ? ' is-negative' : ''}`,
     }));
+    if (labelAll || i === highest || i === lowest) {
+      // Above the bar, or under it where the bar hangs below the rule, and
+      // kept inside the frame either way — a label off the top of a chart is
+      // no better than no label.
+      const wanted = b.value >= 0 ? top - 6 * k : top + h + 13 * k;
+      const ly = Math.min(Math.max(wanted, pad.t + 9 * k), H - pad.b - 3 * k);
+      const t = svgEl('text', { x: pad.l + i * bw + bw / 2, y: ly, 'text-anchor': 'middle', class: 'bar-label' });
+      t.textContent = fmt.usd0(b.value);
+      svg.append(t);
+    }
     if (i % every === 0) {
       const t = svgEl('text', { x: pad.l + i * bw + bw / 2, y: H - pad.b + 4 + 14 * k, 'text-anchor': 'middle', class: 'axis-text' });
       t.textContent = fmt.day(b.label);
@@ -961,7 +978,7 @@ function renderBudget() {
 
   // Pace bars
   $('pace-note').textContent =
-    `Targets are monthly amounts prorated across ${days.projected} days. The tick marks where you should be on day ${days.elapsed}.`;
+    `Targets are monthly amounts prorated across ${days.projected} days. The tick marks where you should be after ${days.elapsed} of them.`;
   const rows = $('pace-rows');
   rows.replaceChildren();
   for (const r of pace.rows) {
@@ -1579,15 +1596,30 @@ function renderExpenses() {
   });
 }
 
-function numberCell(value, onChange) {
+function numberCell(value, onChange, focusKey = null) {
   const td = el('td', 'r');
   const input = document.createElement('input');
   input.type = 'number';
   input.step = '0.01';
   input.value = value;
+  if (focusKey) input.dataset.focusKey = focusKey;
   input.addEventListener('change', () => onChange(Number(input.value)));
   td.append(input);
   return td;
+}
+
+/**
+ * Redraw without dropping the field the cursor is in. Tabbing out of a cell is
+ * what fires its change handler, so by the time the table is rebuilt the focus
+ * has already moved to the next input — and the rebuild would throw that one
+ * away, leaving the tab pointing at nothing. Only cells that name themselves
+ * can be found again; the rest redraw as before.
+ */
+function keepingFocus(redraw) {
+  const key = document.activeElement?.dataset?.focusKey || null;
+  redraw();
+  if (!key) return;
+  document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`)?.focus();
 }
 
 function checkCell(value, onChange) {
@@ -1822,7 +1854,17 @@ function renderAssets() {
       br.append(el('td', null, b.kind));
       br.append(el('td', 'c', '—'));
       br.append(el('td', 'c', '—'));
-      br.append(el('td', 'r', fmt.usd(buckets[b.id] ?? 0)));
+      // The same edit the sinking funds take on the Expenses tab: a bucket
+      // balance is derived, so what is typed lands on the opening allocation
+      // as a difference and the derivation comes out at the figure entered.
+      // This is where the unallocated remainder flagged on the account above
+      // gets handed to a goal.
+      const held = Model.round2(buckets[b.id] ?? 0);
+      br.append(numberCell(held, (v) => {
+        b.opening = Model.round2((b.opening || 0) + (v - held));
+        queueSave('config');
+        keepingFocus(() => render());
+      }, `bucket-${b.id}`));
       br.append(el('td', 'r', b.target ? fmt.usd(b.target) : '—'));
       body.append(br);
     }
@@ -1955,12 +1997,37 @@ function renderEvents() {
 }
 
 /**
+ * The snapshots as recorded, plus one for where the accounts stand now.
+ *
+ * History is imported rather than written here, so the series ends at the last
+ * import — while every figure beside it, from the masthead down to the accounts
+ * table, reads the current position, which is newer. Without this last point
+ * the charts stop short of the numbers they sit under, and the scrub cannot be
+ * dragged to the latest reading at all.
+ *
+ * Dated by when the position was actually taken — the last close, or the date
+ * the opening balances carry — rather than by today, which would claim a
+ * reading nobody took. Derived on the way to the chart and never saved: the
+ * recorded history stays the recorded history.
+ */
+function plottedSnapshots() {
+  const snaps = state.history.snapshots || [];
+  const date = lastClosed()?.closedOn || state.config?.openingBalances?._asOf || null;
+  const balances = latestBalances();
+  if (!date || !Object.keys(balances).length) return snaps;
+  // Only ever an addition to the end. A position no newer than the last
+  // snapshot is already on the chart.
+  if (snaps.some((sn) => sn.date >= date)) return snaps;
+  return [...snaps, { date, balances, live: true }];
+}
+
+/**
  * The snapshot nearest a moment in time. The charts can only be read where a
  * snapshot exists, so every way of choosing a position — dragging, or clicking
  * an event whose date falls between two snapshots — lands through here.
  */
 function nearestSnapshot(t) {
-  const snaps = state.history.snapshots || [];
+  const snaps = plottedSnapshots();
   let best = null, bestGap = Infinity;
   for (const sn of snaps) {
     const gap = Math.abs(PayDates.parse(sn.date) - t);
@@ -1990,7 +2057,7 @@ function scrubTo(t, { scroll = false } = {}) {
  */
 function renderAssetHistory() {
   const cfg = state.config;
-  const snaps = state.history.snapshots || [];
+  const snaps = plottedSnapshots();
   const events = state.history.events || [];
   const series = snaps.map((sn) => ({
     date: sn.date,
@@ -2012,9 +2079,11 @@ function renderAssetHistory() {
   if (series.length) {
     const first = series[0], lastPt = series[series.length - 1];
     const years = PayDates.daysBetween(first.date, lastPt.date) / 365.25;
+    const live = snaps[snaps.length - 1]?.live;
     $('history-note').textContent =
-      `${series.length} snapshots from ${first.date} to ${lastPt.date}. ` +
+      `${snaps.length - (live ? 1 : 0)} snapshots from ${first.date} to ${lastPt.date}. ` +
       `${fmt.usd0(first.value)} → ${fmt.usd0(lastPt.value)} over ${years.toFixed(1)} years. ` +
+      (live ? `The last point is where the accounts stand now, on ${lastPt.date}, rather than a recorded snapshot. ` : '') +
       `Dashed rules mark transfers and one-time events, which move the line without being saving.`;
   } else {
     $('history-note').textContent = 'No history loaded.';

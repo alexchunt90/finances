@@ -159,6 +159,19 @@ describe('the day of the period', () => {
     }
   });
 
+  test('it holds at day one until the period opens', () => {
+    // Closing a period early leaves a gap before the next one starts. Sitting
+    // in that gap is not being two days into a period that has not begun.
+    const period = { start: '2026-09-09', scheduledEnd: '2026-09-24', closedOn: null };
+    for (const todayISO of ['2026-09-06', '2026-09-08', '2026-09-09']) {
+      const days = Model.periodDays(period, todayISO);
+      assert.equal(days.current, 1, `${todayISO} should read as day one`);
+      assert.equal(days.elapsed, 0, `${todayISO} has no completed days behind it`);
+    }
+    // And the day after the start is day two, not a second day two.
+    assert.equal(Model.periodDays(period, '2026-09-10').current, 2);
+  });
+
   test('it never runs past the end of the period', () => {
     // On and after the last day it pins to the last day rather than counting
     // into a day that does not exist.

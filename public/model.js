@@ -172,9 +172,15 @@ const Model = (() => {
    */
   function periodDays(period, todayISO) {
     const end = period.closedOn || todayISO;
-    const elapsed = Math.max(1, PayDates.daysBetween(period.start, end));
+    // Completed days, which is none on the first day and none again on the days
+    // before a period that has not opened yet — closing early leaves that gap.
+    // Flooring this at one, as it once was, made the first two days both read
+    // as day two and dated the day before a period into it.
+    const elapsed = Math.max(0, PayDates.daysBetween(period.start, end));
     const scheduled = Math.max(1, PayDates.daysBetween(period.start, period.scheduledEnd));
-    const projected = period.closedOn ? elapsed : Math.max(elapsed, scheduled);
+    // A period closed the day it opened still ran for a day, or the arithmetic
+    // below divides by a period no time passed in.
+    const projected = period.closedOn ? Math.max(1, elapsed) : Math.max(elapsed, scheduled);
     // Floored at 1 so a per-day figure on the final day divides by a day, not
     // by zero.
     const remaining = Math.max(1, projected - elapsed);
@@ -182,9 +188,10 @@ const Model = (() => {
     // `elapsed` counts completed days, because today's allowance is not earned
     // until the day is done, and every prorated figure is built on that. But as
     // a position it reads a day behind — on the first afternoon you are in day
-    // one, not day zero — so anything that says "day N of M" wants this one. A
-    // closed period needs no adjustment: projected equals elapsed, and the min
-    // leaves it alone.
+    // one, not day zero — so anything that says "day N of M" wants this one. It
+    // holds at day one until the period opens, since a period yet to begin is
+    // not somewhere you can be further into. A closed period needs no
+    // adjustment: projected equals elapsed, and the min leaves it alone.
     const current = Math.min(projected, elapsed + 1);
     return { elapsed, scheduled, projected, remaining, current, late: elapsed > scheduled };
   }

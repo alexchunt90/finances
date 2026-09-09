@@ -450,6 +450,13 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .zero-line { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 3; }
 .bar { fill: var(--accent); }
 .bar.is-negative { fill: var(--warn); }
+/* Sits just off the top of its bar, and is haloed because a clamped label on a
+   full-height bar has nowhere to go but onto the fill. */
+.bar-label {
+  font-family: var(--mono); font-size: calc(11px * var(--chart-k, 1)); fill: var(--ink);
+  paint-order: stroke; stroke: var(--card-sunk); stroke-width: calc(3px * var(--chart-k, 1));
+  stroke-linejoin: round;
+}
 /* --- scrubbing ----------------------------------------------------------- */
 /*
  * pan-y rather than none: a vertical swipe still scrolls the page, while a

@@ -1429,10 +1429,14 @@ function renderExpenses() {
     tr.append(numberCell(Model.round2(e.perPeriod * 2), (v) => {
       e.perPeriod = v / 2;
       queueSave('config');
-      render();
-    }));
+      keepingFocus(() => render());
+    }, `committed-${e.id}`));
     tr.append(el('td', 'r', fmt.usd(e.perPeriod * 24)));
-    tr.append(checkCell(e.necessary, (v) => { e.necessary = v; queueSave('config'); renderExpenses(); }));
+    tr.append(checkCell(e.necessary, (v) => {
+      e.necessary = v;
+      queueSave('config');
+      keepingFocus(() => renderExpenses());
+    }, `committed-need-${e.id}`));
     cbody.append(tr);
   }
   const ctot = el('tr', 'is-total');
@@ -1468,8 +1472,8 @@ function renderExpenses() {
       if (!b) return;
       b.opening = Model.round2((b.opening || 0) + (v - s.balance));
       queueSave('config');
-      render();
-    }));
+      keepingFocus(() => render());
+    }, `sinking-${s.bucketId}`));
     tr.append(el('td', 'r', s.required != null ? fmt.usd(s.required) : '—'));
     sbody.append(tr);
   }
@@ -1489,10 +1493,18 @@ function renderExpenses() {
     const tr = el('tr');
     tr.append(el('td', null, t.name));
     tr.append(el('td', null, t.category));
-    tr.append(numberCell(t.monthly, (v) => { t.monthly = v; queueSave('config'); render(); }));
+    tr.append(numberCell(t.monthly, (v) => {
+      t.monthly = v;
+      queueSave('config');
+      keepingFocus(() => render());
+    }, `target-${t.id}`));
     tr.append(el('td', 'r', fmt.usd(Model.prorate(t.monthly, 13))));
     tr.append(el('td', 'r', fmt.usd(Model.prorate(t.monthly, 19))));
-    tr.append(checkCell(t.necessary, (v) => { t.necessary = v; queueSave('config'); renderExpenses(); }));
+    tr.append(checkCell(t.necessary, (v) => {
+      t.necessary = v;
+      queueSave('config');
+      keepingFocus(() => renderExpenses());
+    }, `target-need-${t.id}`));
     tbody.append(tr);
   }
 
@@ -1521,8 +1533,8 @@ function renderExpenses() {
       tr.append(numberCell(t.base, (v) => {
         cfg.waterfall[t.configKey] = Math.max(0, v);
         queueSave('config');
-        render();
-      }));
+        keepingFocus(() => render());
+      }, `tier-${t.configKey}`));
     } else {
       tr.append(el('td', 'r', fmt.usd(t.base)));
     }
@@ -1549,8 +1561,8 @@ function renderExpenses() {
         sub.append(numberCell(d.base, (v) => {
           cfg.waterfall[t.splitKey][d.index].perPeriod = Math.max(0, v);
           queueSave('config');
-          render();
-        }));
+          keepingFocus(() => render());
+        }, `split-${t.splitKey}-${d.index}`));
         sub.append(el('td', 'r', fmt.usd(d.amount)));
         sub.append(el('td', 'r', fmt.usd(d.base * 24)));
         const dn = el('td');
@@ -1622,11 +1634,12 @@ function keepingFocus(redraw) {
   document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`)?.focus();
 }
 
-function checkCell(value, onChange) {
+function checkCell(value, onChange, focusKey = null) {
   const td = el('td', 'c');
   const input = document.createElement('input');
   input.type = 'checkbox';
   input.checked = !!value;
+  if (focusKey) input.dataset.focusKey = focusKey;
   input.addEventListener('change', () => onChange(input.checked));
   td.append(input);
   return td;

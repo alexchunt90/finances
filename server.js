@@ -312,6 +312,21 @@ function latestBalancesFor(config, periods) {
   return out;
 }
 
+/** Where the accounts stand now, as a snapshot: the last close's balances,
+ *  dated by when that position was actually taken — the last close, or the
+ *  date the opening balances carry. Null when neither has a date, since a
+ *  reading nobody took must not be claimed for today. */
+function livePosition(config, periods) {
+  const closed = periods
+    .filter((p) => p.status === 'closed')
+    .sort((a, b) => a.start.localeCompare(b.start));
+  const last = closed[closed.length - 1];
+  const date = last?.closedOn || config.openingBalances?._asOf || null;
+  const balances = latestBalancesFor(config, periods);
+  if (!date || !Object.keys(balances).length) return null;
+  return { date, balances, live: true };
+}
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -394,13 +409,23 @@ function widgetBurndown(config, periods, todayISO) {
  * draw. Same shape as widgetBurndown: the server does the arithmetic so the
  * widget can never disagree with the page it mirrors.
  *
+ * History is imported, not written, so the recorded snapshots end at the last
+ * import — while a period close moves the accounts on without touching them.
+ * The page bridges that with one derived point, dated by the last close and
+ * carrying its balances (plottedSnapshots in app.js), and so does this: without
+ * it the widget would sit frozen at the last import however many periods
+ * closed. Only ever an addition to the end, and never saved.
+ *
  * Snapshots are thinned to a drawing budget. A decade of them is more points
  * than a phone-sized chart can resolve, and shipping all of them over a
  * tailnet on every widget refresh costs more than it shows. The most recent
- * snapshot is always kept exactly — it is the one the headline figures quote.
+ * point is always kept exactly — it is the one the headline figures quote.
  */
-function widgetComposition(config, history, todayISO, maxPoints = 160) {
+function widgetComposition(config, periods, history, todayISO, maxPoints = 160) {
   const snaps = (history.snapshots || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const recorded = snaps.length;
+  const live = livePosition(config, periods);
+  if (live && !snaps.some((sn) => sn.date >= live.date)) snaps.push(live);
   const series = Model.compositionSeries(config);
   if (!snaps.length) {
     return { asOf: todayISO, generatedAt: new Date().toISOString(), empty: true, series: [], points: [] };
@@ -432,6 +457,9 @@ function widgetComposition(config, history, todayISO, maxPoints = 160) {
     accent: config.theme?.accent || '#D4AF37',
     latest: {
       date: latest.date,
+      // True when this is where the accounts stand after the last close rather
+      // than a recorded snapshot — the same distinction the page's note draws.
+      live: latest.live === true,
       total: total(latest),
       liquid: groupTotal(latest, 'Liquid'),
       illiquid: groupTotal(latest, 'Illiquid'),
@@ -439,7 +467,7 @@ function widgetComposition(config, history, todayISO, maxPoints = 160) {
     // Null when the history does not reach back a year yet, which the widget
     // says rather than quoting a change over an unknown span.
     yearAgo: yearAgo ? { date: yearAgo.date, total: total(yearAgo) } : null,
-    span: { from: snaps[0].date, to: latest.date, snapshots: snaps.length, plotted: kept.length },
+    span: { from: snaps[0].date, to: latest.date, snapshots: recorded, plotted: kept.length },
     series,
     points: kept.map((sn) => ({ t: sn.date, v: series.map((sr) => valueAt(sn, sr.id)) })),
   };
@@ -479,8 +507,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/widget/composition' && (req.method === 'GET' || req.method === 'HEAD')) {
       const asked = url.searchParams.get('today');
       const todayISO = asked && ISO_DATE.test(asked) ? asked : PayDates.todayISO();
-      const [config, history] = await Promise.all([readConfig(), readHistory()]);
-      return json(res, 200, widgetComposition(config, history, todayISO));
+      const [config, periods, history] = await Promise.all([readConfig(), readPeriods(), readHistory()]);
+      return json(res, 200, widgetComposition(config, periods, history, todayISO));
     }
 
     // Quotes for the Investments tab. `symbols` is a comma-separated list; left

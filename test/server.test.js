@@ -215,6 +215,29 @@ describe('server', () => {
       assert.equal(res.status, 200);
       const w = await res.json();
       assert.ok(Array.isArray(w.series));
+      for (const pt of w.points) assert.equal(pt.v.length, w.series.length, 'a value per band');
+    });
+
+    test('composition reaches the last close, not just the last import', async () => {
+      // History is import-only, so a close moves the accounts on without
+      // touching it. The widget must end where the page ends: on the last
+      // closed period's balances, dated by its close.
+      const { periods, history } = await (await get('/api/state')).json();
+      const closed = periods.filter((p) => p.status === 'closed').sort((a, b) => a.start.localeCompare(b.start));
+      const last = closed[closed.length - 1];
+      const recorded = history.snapshots.map((s) => s.date).sort();
+      assert.ok(last && last.closedOn > recorded[recorded.length - 1], 'fixture: a close after the last snapshot');
+
+      const w = await (await get('/api/widget/composition')).json();
+      assert.equal(w.latest.date, last.closedOn, 'headline dated by the close');
+      assert.equal(w.latest.live, true, 'and says it is not a recorded snapshot');
+      assert.equal(w.span.to, last.closedOn);
+      assert.equal(w.span.snapshots, recorded.length, 'the live point is not counted as history');
+      const end = w.points[w.points.length - 1];
+      assert.equal(end.t, last.closedOn, 'the chart ends there too');
+      const expected = w.series.reduce((a, sr) => a + (last.balances[sr.id] || 0), 0);
+      assert.equal(w.latest.total, Math.round(expected * 100) / 100);
+      assert.equal(Math.round(end.v.reduce((a, b) => a + b, 0) * 100) / 100, w.latest.total);
     });
 
     test('tickers takes the widget parameter, and falls back to the watchlist', async () => {

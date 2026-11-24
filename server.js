@@ -312,21 +312,6 @@ function latestBalancesFor(config, periods) {
   return out;
 }
 
-/** Where the accounts stand now, as a snapshot: the last close's balances,
- *  dated by when that position was actually taken — the last close, or the
- *  date the opening balances carry. Null when neither has a date, since a
- *  reading nobody took must not be claimed for today. */
-function livePosition(config, periods) {
-  const closed = periods
-    .filter((p) => p.status === 'closed')
-    .sort((a, b) => a.start.localeCompare(b.start));
-  const last = closed[closed.length - 1];
-  const date = last?.closedOn || config.openingBalances?._asOf || null;
-  const balances = latestBalancesFor(config, periods);
-  if (!date || !Object.keys(balances).length) return null;
-  return { date, balances, live: true };
-}
-
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -411,10 +396,11 @@ function widgetBurndown(config, periods, todayISO) {
  *
  * History is imported, not written, so the recorded snapshots end at the last
  * import — while a period close moves the accounts on without touching them.
- * The page bridges that with one derived point, dated by the last close and
- * carrying its balances (plottedSnapshots in app.js), and so does this: without
- * it the widget would sit frozen at the last import however many periods
- * closed. Only ever an addition to the end, and never saved.
+ * The page adds a point for every period closed since the last snapshot,
+ * dated by its close and carrying its balances (Model.plottedSnapshots), and
+ * this uses the same function: without it the widget would sit frozen at the
+ * last import however many periods closed. Only ever additions to the end,
+ * and never saved.
  *
  * Snapshots are thinned to a drawing budget. A decade of them is more points
  * than a phone-sized chart can resolve, and shipping all of them over a
@@ -422,10 +408,8 @@ function widgetBurndown(config, periods, todayISO) {
  * point is always kept exactly — it is the one the headline figures quote.
  */
 function widgetComposition(config, periods, history, todayISO, maxPoints = 160) {
-  const snaps = (history.snapshots || []).slice().sort((a, b) => a.date.localeCompare(b.date));
-  const recorded = snaps.length;
-  const live = livePosition(config, periods);
-  if (live && !snaps.some((sn) => sn.date >= live.date)) snaps.push(live);
+  const snaps = Model.plottedSnapshots(history.snapshots, periods, config.openingBalances);
+  const recorded = snaps.filter((sn) => !sn.live).length;
   const series = Model.compositionSeries(config);
   if (!snaps.length) {
     return { asOf: todayISO, generatedAt: new Date().toISOString(), empty: true, series: [], points: [] };
@@ -589,9 +573,27 @@ const server = http.createServer(async (req, res) => {
       const incoming = JSON.parse(await readBody(req) || '{}');
       if (incoming.id !== id) return json(res, 400, { error: 'id mismatch' });
 
+      // Closing is where the balances become the record every later figure is
+      // read from — the next close's deltas, the Assets tab, the widgets. A
+      // close with any of them missing would quietly put the opening balances
+      // back in their place, so refuse it. The page gates the button the same
+      // way; this catches whatever gets past it, such as a second click landing
+      // on the period the first click had only just created.
+      const closing = incoming.status === 'closed';
+      const config = closing ? await readConfig() : null;
+      const missing = closing
+        ? (config?.accounts || []).filter((a) => !a.retired)
+          .filter((a) => !Number.isFinite(Number(incoming.balances?.[a.id])) || incoming.balances?.[a.id] === null || incoming.balances?.[a.id] === '')
+          .map((a) => a.id)
+        : [];
+
       const out = await mutate('periods', [], (periods) => {
         const at = periods.findIndex((p) => p.id === id);
         const stored = at === -1 ? null : periods[at];
+
+        if (missing.length && stored?.status !== 'closed') {
+          return { reject: { error: `period ${id} cannot close without a balance for ${missing.join(', ')}`, missing } };
+        }
 
         // A closed period is history. Refuse to overwrite one, so a stale tab
         // cannot silently rewrite totals you already reconciled.

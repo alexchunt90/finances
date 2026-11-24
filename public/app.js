@@ -1167,7 +1167,8 @@ function updateCloseGate() {
     return v != null && v !== '';
   }).length;
   $('close-progress').textContent = `${n} of ${live.length} balances entered`;
-  $('close-period').disabled = n !== live.length;
+  // Held shut while a close is in flight, whatever the count says.
+  $('close-period').disabled = n !== live.length || closing != null;
 }
 
 /**
@@ -1312,8 +1313,40 @@ function renderMortgageField(period) {
   });
 }
 
+/**
+ * One close at a time. closePeriod marks the period closed before it waits on
+ * the network, so a second click in that gap found no open period, minted the
+ * next one on the spot, and closed that too — empty — after which every
+ * balance on the page fell back to the opening ones in config.
+ */
+let closing = null;
+
+function requestClose() {
+  if (closing) return closing;
+  const button = $('close-period');
+  button.disabled = true;
+  closing = closePeriod()
+    .catch((err) => notice(`Could not close: ${err.message}`))
+    .finally(() => {
+      closing = null;
+      updateCloseGate();
+    });
+  return closing;
+}
+
 async function closePeriod() {
+  // Whatever is typed or queued goes out first, through the same queue as
+  // every other save. Sent alongside it, the close would quote the version the
+  // save is about to replace and one of the two would be refused.
+  clearTimeout(saveTimer);
+  await flush();
+  if (pending.size) throw new Error('the balances entered have not saved yet');
+
   const period = openPeriod();
+  const live = state.config.accounts.filter((a) => !a.retired);
+  if (live.some((a) => period.balances?.[a.id] == null)) {
+    throw new Error('every account needs a balance first');
+  }
   const cfg = state.config;
   const balances = latestBalances();
   const days = Model.periodDays({ ...period, closedOn: today() }, today());
@@ -1324,9 +1357,11 @@ async function closePeriod() {
   const surplus = settlement.surplus;
   const sweep = Model.sweepPlan(cfg, surplus, period.balances || {});
 
-  period.closedOn = today();
-  period.status = 'closed';
-  period.totals = {
+  // Built on a copy and applied only once the server has it. Marked closed in
+  // place, a refused close left the page believing it anyway: no open period,
+  // so the next thing to ask for one minted an empty one.
+  const closed = { ...period, closedOn: today(), status: 'closed' };
+  closed.totals = {
     days: days.projected,
     committed: Model.committedTotal(cfg),
     sinking: Model.sinkingTotal(cfg),
@@ -1348,8 +1383,8 @@ async function closePeriod() {
     extraPrincipal: Model.round2(period.extraPrincipal || 0),
   };
 
-  const closeRes = await request(`api/periods/${period.id}`, 'PUT', period);
-  period.version = closeRes.version;
+  const closeRes = await request(`api/periods/${period.id}`, 'PUT', closed);
+  Object.assign(period, closed, { version: closeRes.version });
 
   const next = makePeriod(today());
   if (next.id === period.id) {
@@ -2010,29 +2045,13 @@ function renderEvents() {
 }
 
 /**
- * The snapshots as recorded, plus one for where the accounts stand now.
- *
- * History is imported rather than written here, so the series ends at the last
- * import — while every figure beside it, from the masthead down to the accounts
- * table, reads the current position, which is newer. Without this last point
- * the charts stop short of the numbers they sit under, and the scrub cannot be
- * dragged to the latest reading at all.
- *
- * Dated by when the position was actually taken — the last close, or the date
- * the opening balances carry — rather than by today, which would claim a
- * reading nobody took. Derived on the way to the chart and never saved: the
- * recorded history stays the recorded history.
+ * The snapshots as recorded, plus a point for every period closed since —
+ * Model.plottedSnapshots, shared with the composition widget so the two can
+ * never draw different histories. Derived on the way to the chart and never
+ * saved: the recorded history stays the recorded history.
  */
-function plottedSnapshots() {
-  const snaps = state.history.snapshots || [];
-  const date = lastClosed()?.closedOn || state.config?.openingBalances?._asOf || null;
-  const balances = latestBalances();
-  if (!date || !Object.keys(balances).length) return snaps;
-  // Only ever an addition to the end. A position no newer than the last
-  // snapshot is already on the chart.
-  if (snaps.some((sn) => sn.date >= date)) return snaps;
-  return [...snaps, { date, balances, live: true }];
-}
+const plottedSnapshots = () =>
+  Model.plottedSnapshots(state.history.snapshots, state.periods, state.config?.openingBalances);
 
 /**
  * The snapshot nearest a moment in time. The charts can only be read where a
@@ -2092,11 +2111,16 @@ function renderAssetHistory() {
   if (series.length) {
     const first = series[0], lastPt = series[series.length - 1];
     const years = PayDates.daysBetween(first.date, lastPt.date) / 365.25;
-    const live = snaps[snaps.length - 1]?.live;
+    const derived = snaps.filter((sn) => sn.live);
+    const fromCloses = derived.length === 1
+      ? `The last point, on ${derived[0].date}, comes from the balances entered at close rather than a recorded snapshot. `
+      : derived.length
+        ? `The last ${derived.length} points, ${derived[0].date} to ${lastPt.date}, come from the balances entered at each close rather than recorded snapshots. `
+        : '';
     $('history-note').textContent =
-      `${snaps.length - (live ? 1 : 0)} snapshots from ${first.date} to ${lastPt.date}. ` +
+      `${snaps.length - derived.length} snapshots from ${first.date} to ${lastPt.date}. ` +
       `${fmt.usd0(first.value)} → ${fmt.usd0(lastPt.value)} over ${years.toFixed(1)} years. ` +
-      (live ? `The last point is where the accounts stand now, on ${lastPt.date}, rather than a recorded snapshot. ` : '') +
+      fromCloses +
       `Dashed rules mark transfers and one-time events, which move the line without being saving.`;
   } else {
     $('history-note').textContent = 'No history loaded.';
@@ -3096,9 +3120,7 @@ function wire() {
     renderBudget();
   });
 
-  $('close-period').addEventListener('click', () => {
-    closePeriod().catch((err) => notice(`Could not close: ${err.message}`));
-  });
+  $('close-period').addEventListener('click', requestClose);
 
   wireSortHeaders('committed-head', sorts.committed, () => renderExpenses());
 

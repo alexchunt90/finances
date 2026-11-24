@@ -904,12 +904,52 @@ const Model = (() => {
     return out;
   }
 
+  /**
+   * The asset history as plotted: the recorded snapshots, then a point for
+   * every period closed since the last of them.
+   *
+   * History is imported rather than written, so it ends at the last import,
+   * while each close records where every account stood that day. Bridging the
+   * gap with only the latest close drew a straight line across months of
+   * closes; plotting each one draws what was actually entered.
+   *
+   * A close is dated by its closedOn. One with no balances adds nothing — it
+   * is not a reading. Two closed on one day keep the later period's figures.
+   * Points derived this way are marked `live` (not a recorded snapshot) and
+   * never saved. With no close to plot, the opening balances in config stand
+   * in, dated by their _asOf, so a fresh setup still reaches the figures shown
+   * beside the chart.
+   */
+  function plottedSnapshots(snapshots, periods, openingBalances) {
+    const snaps = (snapshots || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+    const lastRecorded = snaps.length ? snaps[snaps.length - 1].date : '';
+
+    const byDate = new Map();
+    const closes = (periods || [])
+      .filter((p) => p.status === 'closed' && p.closedOn && p.balances && Object.keys(p.balances).length)
+      .sort((a, b) => a.start.localeCompare(b.start));
+    for (const p of closes) {
+      if (p.closedOn > lastRecorded) byDate.set(p.closedOn, { date: p.closedOn, balances: p.balances, live: true });
+    }
+    const derived = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+    if (derived.length) return [...snaps, ...derived];
+
+    // Nothing closed past the import. Only when nothing has closed with
+    // balances at all do the opening ones describe where the accounts stand.
+    if (closes.length) return snaps;
+    const date = openingBalances?._asOf || null;
+    const balances = {};
+    for (const [k, v] of Object.entries(openingBalances || {})) if (!k.startsWith('_')) balances[k] = v;
+    if (!date || !Object.keys(balances).length || date <= lastRecorded) return snaps;
+    return [...snaps, { date, balances, live: true }];
+  }
+
   return {
     round2, sum, prorate, DAYS_PER_MONTH, bucketDrift,
     committedTotal, sinkingTotal, scheduledTransfer, targetsFor, targetsTotal, necessaryFloor, burndown,
     projection, k401PerPeriod, periodReturn,
     mortgageStanding, mortgageTrajectory,
-    compositionSeries,
+    compositionSeries, plottedSnapshots,
     waterfall, periodDays, pace, surpriseTotal, settle, sweepPlan,
     reconcile, plannedFlows, contributed, windfalls,
     averageDraw, bufferTrajectory, emergencyTrajectory, savingsTrajectory, sinkingCoverage, assetSummary,

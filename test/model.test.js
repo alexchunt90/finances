@@ -216,3 +216,57 @@ describe('settlement', () => {
     }
   });
 });
+
+describe('the asset history as plotted', () => {
+  const snapshots = [
+    { date: '2026-08-07', balances: { a: 100, b: 50 } },
+    { date: '2026-08-23', balances: { a: 110, b: 50 } },
+  ];
+  const closed = (start, closedOn, balances) => ({ id: start, start, status: 'closed', closedOn, balances });
+  const opening = { _asOf: '2026-01-01', a: 1, b: 1 };
+
+  test('every close after the last snapshot is a point, in order', () => {
+    const periods = [
+      closed('2026-08-24', '2026-09-08', { a: 120, b: 50 }),
+      closed('2026-09-09', '2026-09-24', { a: 130, b: 55 }),
+      closed('2026-09-24', '2026-10-07', { a: 125, b: 60 }),
+      { id: '2026-10-08', start: '2026-10-08', status: 'open', closedOn: null, balances: { a: 999 } },
+    ];
+    const out = Model.plottedSnapshots(snapshots, periods, opening);
+    assert.deepEqual(out.map((s) => s.date), ['2026-08-07', '2026-08-23', '2026-09-08', '2026-09-24', '2026-10-07']);
+    assert.deepEqual(out.slice(2).map((s) => s.balances.a), [120, 130, 125], 'each carries its own close');
+    assert.ok(out.slice(2).every((s) => s.live) && !out.slice(0, 2).some((s) => s.live), 'derived points are marked');
+  });
+
+  test('a close the import already covers is not plotted twice', () => {
+    const out = Model.plottedSnapshots(snapshots, [closed('2026-08-08', '2026-08-23', { a: 5 })], opening);
+    assert.equal(out.length, 2);
+    assert.equal(out[1].balances.a, 110, 'the recorded snapshot stands');
+  });
+
+  test('a close with no balances is not a reading', () => {
+    const periods = [
+      closed('2026-11-09', '2026-11-24', { a: 140, b: 70 }),
+      closed('2026-11-24', '2026-11-24', {}),
+    ];
+    const out = Model.plottedSnapshots(snapshots, periods, opening);
+    assert.equal(out.length, 3);
+    assert.equal(out[2].balances.a, 140, 'not the opening balances, and not nothing');
+  });
+
+  test('two closes on one day keep the later period', () => {
+    const periods = [
+      closed('2026-11-09', '2026-11-24', { a: 140 }),
+      closed('2026-11-24', '2026-11-24', { a: 150 }),
+    ];
+    const out = Model.plottedSnapshots(snapshots, periods, opening);
+    assert.equal(out.length, 3);
+    assert.equal(out[2].balances.a, 150);
+  });
+
+  test('with nothing closed, the opening balances reach past the import', () => {
+    const out = Model.plottedSnapshots(snapshots, [], { _asOf: '2026-08-30', a: 7, b: 8 });
+    assert.deepEqual(out[2], { date: '2026-08-30', balances: { a: 7, b: 8 }, live: true });
+    assert.equal(Model.plottedSnapshots(snapshots, [], opening).length, 2, 'but not when older than it');
+  });
+});

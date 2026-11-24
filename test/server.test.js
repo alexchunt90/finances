@@ -95,6 +95,10 @@ const put = (p, body) => fetch(base + p, {
   method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
 });
 const openPeriod = async () => (await (await get('/api/state')).json()).periods.find((p) => p.status !== 'closed');
+/** A balance for every account still in use — what a close has to carry. */
+const everyBalance = async () => Object.fromEntries(
+  (await (await get('/api/state')).json()).config.accounts.filter((a) => !a.retired).map((a) => [a.id, 100])
+);
 
 describe('server', () => {
   test('an empty store is seeded from example/, and says so', async () => {
@@ -156,14 +160,44 @@ describe('server', () => {
     // not lose each other's edits. They share periods.json, so every write
     // after the first has to notice and redo itself.
     const ids = Array.from({ length: 12 }, (_, i) => `1990-${String(i + 1).padStart(2, '0')}-01`);
+    const balances = await everyBalance();
     const statuses = await Promise.all(ids.map((id) => put(`/api/periods/${id}`, {
       id, start: id, scheduledEnd: id, status: 'closed', closedOn: id,
-      takeHome: 1, spending: [], oneOffs: [], flows: [], balances: {}, version: 0,
+      takeHome: 1, spending: [], oneOffs: [], flows: [], balances, version: 0,
     }).then((r) => r.status)));
     assert.deepEqual([...new Set(statuses)], [200]);
 
     const stored = (await (await get('/api/state')).json()).periods.map((p) => p.id);
     assert.deepEqual(ids.filter((id) => !stored.includes(id)), [], 'none were clobbered');
+  });
+
+  test('a period cannot close with a balance missing', async () => {
+    // What a second click on Close used to do: close the period the first
+    // click had just opened, before anything was entered in it.
+    const id = '1991-01-01';
+    const blank = {
+      id, start: id, scheduledEnd: id, status: 'closed', closedOn: id,
+      takeHome: 1, spending: [], oneOffs: [], flows: [], balances: {}, version: 0,
+    };
+    const empty = await put(`/api/periods/${id}`, blank);
+    assert.equal(empty.status, 409);
+    assert.match((await empty.json()).error, /cannot close without a balance/);
+
+    const { [Object.keys(await everyBalance())[0]]: _, ...short } = await everyBalance();
+    const partial = await put(`/api/periods/${id}`, { ...blank, balances: short });
+    assert.equal(partial.status, 409, 'one missing is as bad as all of them');
+
+    const stored = (await (await get('/api/state')).json()).periods.find((p) => p.id === id);
+    assert.equal(stored, undefined, 'and nothing was written');
+
+    const full = await put(`/api/periods/${id}`, { ...blank, balances: await everyBalance() });
+    assert.equal(full.status, 200);
+  });
+
+  test('an open period still saves with balances half entered', async () => {
+    const period = await openPeriod();
+    const res = await put(`/api/periods/${period.id}`, { ...period, balances: {} });
+    assert.equal(res.status, 200);
   });
 
   test('a closed period refuses to be reopened', async () => {
@@ -232,7 +266,11 @@ describe('server', () => {
       assert.equal(w.latest.date, last.closedOn, 'headline dated by the close');
       assert.equal(w.latest.live, true, 'and says it is not a recorded snapshot');
       assert.equal(w.span.to, last.closedOn);
-      assert.equal(w.span.snapshots, recorded.length, 'the live point is not counted as history');
+      assert.equal(w.span.snapshots, recorded.length, 'the derived points are not counted as history');
+      const lastRecorded = recorded[recorded.length - 1];
+      for (const p of closed.filter((c) => c.closedOn > lastRecorded && Object.keys(c.balances || {}).length)) {
+        assert.ok(w.points.some((pt) => pt.t === p.closedOn), `the ${p.closedOn} close is plotted too`);
+      }
       const end = w.points[w.points.length - 1];
       assert.equal(end.t, last.closedOn, 'the chart ends there too');
       const expected = w.series.reduce((a, sr) => a + (last.balances[sr.id] || 0), 0);
